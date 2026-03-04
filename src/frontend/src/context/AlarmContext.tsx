@@ -9,12 +9,19 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import type { Alarm } from "../backend.d";
 import { Day, VerificationMode } from "../backend.d";
-import { useActor } from "../hooks/useActor";
+import {
+  type FirestoreAlarm,
+  createAlarmInFirestore,
+  deleteAlarmFromFirestore,
+  fetchAlarmsForUser,
+  toggleAlarmInFirestore,
+  updateAlarmInFirestore,
+} from "../lib/alarmService";
 import { useAuthContext } from "./AuthContext";
 
-export type { Alarm };
+// Re-export for use in other files
+export type Alarm = FirestoreAlarm;
 export { Day, VerificationMode };
 
 interface AlarmContextType {
@@ -34,15 +41,15 @@ interface AlarmContextType {
     sound: string,
   ) => Promise<void>;
   updateAlarm: (
-    id: bigint,
+    id: string,
     time: bigint,
     repeatDays: Day[],
     verificationMode: VerificationMode,
     sound: string,
     enabled: boolean,
   ) => Promise<void>;
-  deleteAlarm: (id: bigint) => Promise<void>;
-  toggleAlarm: (id: bigint, enabled: boolean) => Promise<void>;
+  deleteAlarm: (id: string) => Promise<void>;
+  toggleAlarm: (id: string, enabled: boolean) => Promise<void>;
   dismissActiveAlarm: () => void;
   recordSuccess: () => Promise<void>;
   refetchAlarms: () => Promise<void>;
@@ -61,7 +68,6 @@ const DAY_MAP: Record<number, Day> = {
 };
 
 export function AlarmProvider({ children }: { children: ReactNode }) {
-  const { actor } = useActor();
   const { user } = useAuthContext();
   const navigate = useNavigate();
   const [alarms, setAlarms] = useState<Alarm[]>([]);
@@ -69,39 +75,30 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
   const [activeAlarm, setActiveAlarm] = useState<Alarm | null>(null);
   const [stats, setStats] = useState<AlarmContextType["stats"]>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const audioIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const firedAlarmsRef = useRef<Set<string>>(new Set());
 
   const fetchAlarms = useCallback(async () => {
-    if (!actor || !user) return;
+    if (!user) return;
     try {
       setLoading(true);
-      const [fetchedAlarms, fetchedStats] = await Promise.all([
-        actor.getAlarms(),
-        actor.getStats(),
-      ]);
-      setAlarms(fetchedAlarms);
-      if (fetchedStats) {
-        setStats({
-          totalSuccesses: Number(fetchedStats.totalSuccesses),
-          currentStreak: Number(fetchedStats.currentStreak),
-          totalAlarmsTriggered: Number(fetchedStats.totalAlarmsTriggered),
-          lastSuccessDate: Number(fetchedStats.lastSuccessDate),
-        });
-      }
+      const fetched = await fetchAlarmsForUser(user.uid);
+      setAlarms(fetched);
     } catch (err) {
       console.error("Failed to fetch alarms:", err);
-      toast.error("Failed to load alarms");
+      toast.error("Failed to load alarms. Check your connection.");
     } finally {
       setLoading(false);
     }
-  }, [actor, user]);
+  }, [user]);
 
   useEffect(() => {
-    if (actor && user) {
+    if (user) {
       fetchAlarms();
+    } else {
+      setAlarms([]);
+      setStats(null);
     }
-  }, [actor, user, fetchAlarms]);
+  }, [user, fetchAlarms]);
 
   // Alarm time checker — runs every 30 seconds
   useEffect(() => {
@@ -119,7 +116,7 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
 
         // Check if alarm matches current time (within 1 min window)
         const timeDiff = Math.abs(currentMinutes - alarmMinutes);
-        if (timeDiff > 1 && timeDiff < 1439) continue; // 1439 = 24h-1 for midnight wrap
+        if (timeDiff > 1 && timeDiff < 1439) continue;
 
         // Check day of week
         if (
@@ -152,21 +149,28 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
     verificationMode: VerificationMode,
     sound: string,
   ) => {
-    if (!actor) throw new Error("Not connected");
-    await actor.createAlarm(time, repeatDays, verificationMode, sound);
-    await fetchAlarms();
+    if (!user) throw new Error("You must be signed in to create an alarm");
+    const newAlarm = await createAlarmInFirestore(
+      user.uid,
+      time,
+      repeatDays,
+      verificationMode,
+      sound,
+    );
+    setAlarms((prev) =>
+      [...prev, newAlarm].sort((a, b) => Number(a.time) - Number(b.time)),
+    );
   };
 
   const updateAlarm = async (
-    id: bigint,
+    id: string,
     time: bigint,
     repeatDays: Day[],
     verificationMode: VerificationMode,
     sound: string,
     enabled: boolean,
   ) => {
-    if (!actor) throw new Error("Not connected");
-    await actor.updateAlarm(
+    await updateAlarmInFirestore(
       id,
       time,
       repeatDays,
@@ -174,50 +178,39 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
       sound,
       enabled,
     );
-    await fetchAlarms();
+    setAlarms((prev) =>
+      prev
+        .map((a) =>
+          a.id === id
+            ? { ...a, time, repeatDays, verificationMode, sound, enabled }
+            : a,
+        )
+        .sort((a, b) => Number(a.time) - Number(b.time)),
+    );
   };
 
-  const deleteAlarm = async (id: bigint) => {
-    if (!actor) throw new Error("Not connected");
-    await actor.deleteAlarm(id);
+  const deleteAlarm = async (id: string) => {
+    await deleteAlarmFromFirestore(id);
     setAlarms((prev) => prev.filter((a) => a.id !== id));
   };
 
-  const toggleAlarm = async (id: bigint, enabled: boolean) => {
-    const alarm = alarms.find((a) => a.id === id);
-    if (!alarm || !actor) return;
-    await actor.updateAlarm(
-      id,
-      alarm.time,
-      alarm.repeatDays,
-      alarm.verificationMode,
-      alarm.sound,
-      enabled,
-    );
+  const toggleAlarm = async (id: string, enabled: boolean) => {
+    await toggleAlarmInFirestore(id, enabled);
     setAlarms((prev) => prev.map((a) => (a.id === id ? { ...a, enabled } : a)));
   };
 
   const dismissActiveAlarm = () => {
     setActiveAlarm(null);
-    if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
   };
 
   const recordSuccess = async () => {
-    try {
-      if (actor) {
-        const updatedStats = await actor.getStats();
-        if (updatedStats) {
-          setStats({
-            totalSuccesses: Number(updatedStats.totalSuccesses),
-            currentStreak: Number(updatedStats.currentStreak),
-            totalAlarmsTriggered: Number(updatedStats.totalAlarmsTriggered),
-            lastSuccessDate: Number(updatedStats.lastSuccessDate),
-          });
-        }
-      }
-    } catch (err) {
-      console.error("Failed to record success:", err);
-    }
+    // Update local stats optimistically
+    setStats((prev) => ({
+      totalSuccesses: (prev?.totalSuccesses ?? 0) + 1,
+      currentStreak: (prev?.currentStreak ?? 0) + 1,
+      totalAlarmsTriggered: (prev?.totalAlarmsTriggered ?? 0) + 1,
+      lastSuccessDate: Date.now(),
+    }));
     dismissActiveAlarm();
   };
 

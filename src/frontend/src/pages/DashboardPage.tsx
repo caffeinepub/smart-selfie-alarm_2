@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Bell, CheckCircle, Clock, Flame, Plus } from "lucide-react";
 import { motion } from "motion/react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlarmCard } from "../components/AlarmCard";
 import { PageSkeleton } from "../components/LoadingSpinner";
@@ -68,9 +69,7 @@ function getNextAlarm(
 
   const h = Math.floor(Number(nearest.time) / 60);
   const m = Number(nearest.time) % 60;
-  const ampm = h >= 12 ? "PM" : "AM";
-  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  const display = `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+  const display = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 
   return { alarm: nearest, display };
 }
@@ -86,6 +85,29 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { alarms, loading, stats, toggleAlarm, deleteAlarm } = useAlarms();
+
+  const [liveTime, setLiveTime] = useState(() =>
+    new Date().toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }),
+  );
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLiveTime(
+        new Date().toLocaleTimeString("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }),
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const nextAlarm = getNextAlarm(alarms);
   const displayName =
@@ -123,6 +145,26 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold text-white mt-0.5">
             {displayName} 👋
           </h1>
+          {/* Live clock */}
+          <div
+            className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl"
+            style={{
+              background: "rgba(124,58,237,0.12)",
+              border: "1px solid rgba(124,58,237,0.2)",
+            }}
+          >
+            <Clock className="w-3.5 h-3.5" style={{ color: "#a78bfa" }} />
+            <span
+              className="font-mono text-lg font-bold tracking-widest"
+              style={{
+                color: "#c4b5fd",
+                textShadow: "0 0 12px rgba(167,139,250,0.6)",
+              }}
+              data-ocid="dashboard.live_clock"
+            >
+              {liveTime}
+            </span>
+          </div>
         </div>
       </div>
 

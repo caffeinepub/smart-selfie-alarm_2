@@ -1,9 +1,11 @@
 import {
   type User,
   createUserWithEmailAndPassword,
+  getRedirectResult,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
 } from "firebase/auth";
 import {
@@ -31,6 +33,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Handle redirect result on page load (for mobile browsers that block popups)
+    getRedirectResult(auth).catch((err) => {
+      console.warn("Google redirect result error:", err);
+    });
+
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setLoading(false);
@@ -51,7 +58,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithGoogle = async () => {
-    await signInWithPopup(auth, googleProvider);
+    try {
+      // Try popup first (works on desktop and most mobile browsers)
+      await signInWithPopup(auth, googleProvider);
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code ?? "";
+      // If popup was blocked, fall back to redirect flow
+      if (
+        code === "auth/popup-blocked" ||
+        code === "auth/popup-closed-by-user"
+      ) {
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
+      // Re-throw other errors so the UI can handle them
+      throw err;
+    }
   };
 
   return (

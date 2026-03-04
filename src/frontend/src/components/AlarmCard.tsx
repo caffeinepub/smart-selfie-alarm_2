@@ -9,8 +9,8 @@ import { Day, VerificationMode } from "../context/AlarmContext";
 interface AlarmCardProps {
   alarm: Alarm;
   index: number;
-  onToggle: (id: bigint, enabled: boolean) => void;
-  onDelete: (id: bigint) => void;
+  onToggle: (id: string, enabled: boolean) => void;
+  onDelete: (id: string) => void;
 }
 
 const DAY_LABELS: Record<Day, string> = {
@@ -43,9 +43,7 @@ function formatTime(minutes: bigint): string {
   const mins = Number(minutes);
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  const ampm = h >= 12 ? "PM" : "AM";
-  const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${hour12}:${String(m).padStart(2, "0")} ${ampm}`;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 export function AlarmCard({

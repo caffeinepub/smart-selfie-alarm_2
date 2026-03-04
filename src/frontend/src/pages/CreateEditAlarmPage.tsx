@@ -43,9 +43,8 @@ export default function CreateEditAlarmPage() {
   const { alarms, addAlarm, updateAlarm } = useAlarms();
   const isEdit = !!id;
 
-  const [hour, setHour] = useState(7);
-  const [minute, setMinute] = useState(0);
-  const [ampm, setAmpm] = useState<"AM" | "PM">("AM");
+  // timeValue is a string in "HH:MM" 24-hour format
+  const [timeValue, setTimeValue] = useState("07:00");
   const [selectedDays, setSelectedDays] = useState<Day[]>([]);
   const [verificationMode, setVerificationMode] = useState<VerificationMode>(
     VerificationMode.mathPuzzle,
@@ -55,15 +54,14 @@ export default function CreateEditAlarmPage() {
 
   useEffect(() => {
     if (isEdit && id) {
-      const alarm = alarms.find((a) => String(a.id) === id);
+      const alarm = alarms.find((a) => a.id === id);
       if (alarm) {
         const totalMins = Number(alarm.time);
-        const h24 = Math.floor(totalMins / 60);
+        const h = Math.floor(totalMins / 60);
         const m = totalMins % 60;
-        const ispm = h24 >= 12;
-        setHour(h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24);
-        setMinute(m);
-        setAmpm(ispm ? "PM" : "AM");
+        setTimeValue(
+          `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
+        );
         setSelectedDays(alarm.repeatDays);
         setVerificationMode(alarm.verificationMode);
         setSound(alarm.sound);
@@ -78,18 +76,22 @@ export default function CreateEditAlarmPage() {
   };
 
   const getMinutesSinceMidnight = (): bigint => {
-    let h24 = hour;
-    if (ampm === "PM" && hour !== 12) h24 += 12;
-    if (ampm === "AM" && hour === 12) h24 = 0;
-    return BigInt(h24 * 60 + minute);
+    const [hStr, mStr] = timeValue.split(":");
+    const h = Number.parseInt(hStr ?? "0", 10);
+    const m = Number.parseInt(mStr ?? "0", 10);
+    return BigInt(h * 60 + m);
   };
 
   const handleSave = async () => {
+    if (!timeValue) {
+      toast.error("Please set a time for the alarm");
+      return;
+    }
     setSaving(true);
     try {
       const time = getMinutesSinceMidnight();
       if (isEdit && id) {
-        const alarm = alarms.find((a) => String(a.id) === id);
+        const alarm = alarms.find((a) => a.id === id);
         if (alarm) {
           await updateAlarm(
             alarm.id,
@@ -100,6 +102,8 @@ export default function CreateEditAlarmPage() {
             alarm.enabled,
           );
           toast.success("Alarm updated!");
+        } else {
+          toast.error("Alarm not found");
         }
       } else {
         await addAlarm(time, selectedDays, verificationMode, sound);
@@ -108,7 +112,9 @@ export default function CreateEditAlarmPage() {
       navigate("/dashboard");
     } catch (err) {
       console.error(err);
-      toast.error("Failed to save alarm");
+      const message =
+        err instanceof Error ? err.message : "Failed to save alarm";
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -149,106 +155,42 @@ export default function CreateEditAlarmPage() {
         <div className="glass-card p-5">
           <div className="flex items-center gap-2 mb-4">
             <Clock className="w-4 h-4" style={{ color: "#7c3aed" }} />
-            <h2 className="font-semibold text-white">Time</h2>
+            <h2 className="font-semibold text-white">Time (24-hour)</h2>
           </div>
-          <div className="flex items-center justify-center gap-3">
-            {/* Hour */}
-            <div className="flex flex-col items-center gap-1">
-              <button
-                type="button"
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-white hover:bg-white/10 transition-all text-lg font-bold"
-                onClick={() => setHour((h) => (h === 12 ? 1 : h + 1))}
-              >
-                ▲
-              </button>
-              <div
-                className="w-20 h-16 rounded-2xl flex items-center justify-center text-4xl font-bold text-white"
-                style={{
-                  background: "rgba(124,58,237,0.15)",
-                  border: "1px solid rgba(124,58,237,0.2)",
-                }}
-              >
-                {String(hour).padStart(2, "0")}
-              </div>
-              <button
-                type="button"
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-white hover:bg-white/10 transition-all text-lg font-bold"
-                onClick={() => setHour((h) => (h === 1 ? 12 : h - 1))}
-              >
-                ▼
-              </button>
-            </div>
 
-            <span className="text-3xl font-bold text-white mb-1">:</span>
-
-            {/* Minute */}
-            <div className="flex flex-col items-center gap-1">
-              <button
-                type="button"
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-white hover:bg-white/10 transition-all text-lg font-bold"
-                onClick={() => setMinute((m) => (m + 5) % 60)}
-              >
-                ▲
-              </button>
-              <div
-                className="w-20 h-16 rounded-2xl flex items-center justify-center text-4xl font-bold text-white"
-                style={{
-                  background: "rgba(124,58,237,0.15)",
-                  border: "1px solid rgba(124,58,237,0.2)",
-                }}
-              >
-                {String(minute).padStart(2, "0")}
-              </div>
-              <button
-                type="button"
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-white hover:bg-white/10 transition-all text-lg font-bold"
-                onClick={() => setMinute((m) => (m - 5 + 60) % 60)}
-              >
-                ▼
-              </button>
-            </div>
-
-            {/* AM/PM */}
-            <div className="flex flex-col gap-2 ml-2">
-              {(["AM", "PM"] as const).map((period) => (
-                <button
-                  key={period}
-                  type="button"
-                  className="w-14 h-8 rounded-xl text-sm font-semibold transition-all"
-                  style={
-                    ampm === period
-                      ? {
-                          background:
-                            "linear-gradient(135deg, #7c3aed, #6366f1)",
-                          color: "white",
-                          boxShadow: "0 0 12px rgba(124,58,237,0.3)",
-                        }
-                      : {
-                          background: "rgba(255,255,255,0.06)",
-                          color: "#94a3b8",
-                          border: "1px solid rgba(255,255,255,0.08)",
-                        }
-                  }
-                  onClick={() => setAmpm(period)}
-                  data-ocid="alarm_form.input"
-                >
-                  {period}
-                </button>
-              ))}
-            </div>
+          {/* Native time input for direct entry */}
+          <div className="flex flex-col items-center gap-4">
+            <input
+              type="time"
+              value={timeValue}
+              onChange={(e) => setTimeValue(e.target.value)}
+              data-ocid="alarm_form.time_input"
+              className="w-full rounded-2xl text-center text-4xl font-bold font-mono tracking-widest px-4 py-4 outline-none cursor-pointer"
+              style={{
+                background: "rgba(124,58,237,0.12)",
+                border: "1px solid rgba(124,58,237,0.3)",
+                color: "#f8fafc",
+                colorScheme: "dark",
+                WebkitAppearance: "none",
+                minHeight: "80px",
+              }}
+            />
+            <p className="text-xs" style={{ color: "#64748b" }}>
+              Tap the time to edit hours and minutes directly
+            </p>
           </div>
         </div>
 
         {/* Repeat days */}
         <div className="glass-card p-5">
           <h2 className="font-semibold text-white mb-4">Repeat</h2>
-          <div className="grid grid-cols-7 gap-1.5">
+          <div className="grid grid-cols-7 gap-1">
             {DAY_ORDER.map((day) => (
               <button
                 key={day}
                 type="button"
                 className={cn(
-                  "h-10 rounded-xl text-xs font-semibold transition-all",
+                  "h-9 rounded-lg text-[10px] font-semibold transition-all",
                 )}
                 style={
                   selectedDays.includes(day)

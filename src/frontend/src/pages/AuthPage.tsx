@@ -25,9 +25,19 @@ function getFirebaseErrorMessage(code: string): string {
     case "auth/too-many-requests":
       return "Too many attempts. Please try again later.";
     case "auth/popup-closed-by-user":
-      return "Sign-in was cancelled.";
+      return "Sign-in was cancelled. Please try again.";
+    case "auth/popup-blocked":
+      return "Pop-up was blocked by your browser. Please allow pop-ups for this site.";
+    case "auth/cancelled-popup-request":
+      return "Another sign-in is in progress. Please wait.";
+    case "auth/network-request-failed":
+      return "Network error. Please check your connection and try again.";
+    case "auth/operation-not-allowed":
+      return "Google sign-in is not enabled. Please contact support.";
+    case "auth/internal-error":
+      return "An internal error occurred. Please try again.";
     default:
-      return "Something went wrong. Please try again.";
+      return `Sign-in failed (${code || "unknown error"}). Please try again.`;
   }
 }
 
@@ -53,7 +63,7 @@ export default function AuthPage() {
       } else {
         await signup(email, password);
       }
-      navigate("/dashboard");
+      navigate("/home");
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";
       setError(getFirebaseErrorMessage(code));
@@ -67,7 +77,7 @@ export default function AuthPage() {
     setGoogleLoading(true);
     try {
       await signInWithGoogle();
-      navigate("/dashboard");
+      navigate("/home");
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";
       setError(getFirebaseErrorMessage(code));

@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import {
   AlarmClock,
+  Home,
   Info,
   LayoutDashboard,
   Mail,
@@ -15,6 +16,7 @@ interface LayoutProps {
 }
 
 const navItems = [
+  { to: "/home", label: "Home", icon: Home },
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/alarm/new", label: "Add Alarm", icon: Plus },
   { to: "/settings", label: "Settings", icon: Settings },
@@ -23,7 +25,8 @@ const navItems = [
 ];
 
 const bottomNavItems = [
-  { to: "/dashboard", label: "Home", icon: LayoutDashboard },
+  { to: "/home", label: "Home", icon: Home },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/alarm/new", label: "Add", icon: Plus },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -160,7 +163,12 @@ export function Layout({ children }: LayoutProps) {
       >
         <div className="flex items-center justify-around">
           {bottomNavItems.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} className="flex-1">
+            <NavLink
+              key={to}
+              to={to}
+              className="flex-1"
+              data-ocid={`nav.${label.toLowerCase().replace(" ", "_")}.link`}
+            >
               {({ isActive }) => (
                 <div className="flex flex-col items-center gap-1 py-1">
                   {to === "/alarm/new" ? (

@@ -52,10 +52,10 @@ export default function AlarmTriggerPage() {
   const playBeepRef = useRef<(() => void) | null>(null);
   const now = useCurrentTime();
 
-  const timeStr = now.toLocaleTimeString("en-US", {
+  const timeStr = now.toLocaleTimeString("en-GB", {
     hour: "2-digit",
     minute: "2-digit",
-    hour12: true,
+    hour12: false,
   });
 
   useEffect(() => {

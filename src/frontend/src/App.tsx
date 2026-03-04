@@ -21,6 +21,7 @@ import AuthPage from "./pages/AuthPage";
 import ContactPage from "./pages/ContactPage";
 import CreateEditAlarmPage from "./pages/CreateEditAlarmPage";
 import DashboardPage from "./pages/DashboardPage";
+import HomePage from "./pages/HomePage";
 import SettingsPage from "./pages/SettingsPage";
 import VerificationPage from "./pages/VerificationPage";
 
@@ -46,6 +47,7 @@ function AppRoutes() {
   useEffect(() => {
     const titles: Record<string, string> = {
       "/": "Smart Selfie Alarm — Sign In",
+      "/home": "Home — Smart Selfie Alarm",
       "/dashboard": "Dashboard — Smart Selfie Alarm",
       "/alarm/new": "New Alarm — Smart Selfie Alarm",
       "/alarm-trigger": "Wake Up! — Smart Selfie Alarm",
@@ -76,14 +78,20 @@ function AppRoutes() {
             {/* Public routes */}
             <Route
               path="/"
-              element={
-                user ? <Navigate to="/dashboard" replace /> : <AuthPage />
-              }
+              element={user ? <Navigate to="/home" replace /> : <AuthPage />}
             />
             <Route path="/about" element={<AboutPage />} />
             <Route path="/contact" element={<ContactPage />} />
 
             {/* Protected routes */}
+            <Route
+              path="/home"
+              element={
+                <ProtectedRoute>
+                  <HomePage />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/dashboard"
               element={
