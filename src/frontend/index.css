@@ -90,6 +90,8 @@
     background-color: #0a0a0f;
     min-height: 100vh;
     overflow-x: hidden;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
   }
 
   h1,

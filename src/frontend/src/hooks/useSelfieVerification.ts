@@ -11,8 +11,8 @@ import {
 
 const EAR_EYES_OPEN_THRESHOLD = 0.22;
 const MIN_FACE_WIDTH_PX = 120;
-const DETECTION_INTERVAL_MS = 750;
-const LANDMARK_HISTORY_SIZE = 4;
+const DETECTION_INTERVAL_MS = 400;
+const LANDMARK_HISTORY_SIZE = 3;
 
 export type SelfieError =
   | "camera_denied"
@@ -48,6 +48,7 @@ export function useSelfieVerification(
     null,
   );
   const isCompleteRef = useRef(false);
+  const isDetectingRef = useRef(false); // single-detection lock
   const landmarkHistoryRef = useRef<Landmark[][]>([]);
   const autoCaptureFiredRef = useRef(false);
   // Use a ref to hold latest takeSelfie to avoid circular dep in startDetection
@@ -124,8 +125,9 @@ export function useSelfieVerification(
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "user",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 24 },
           },
           audio: false,
         });
@@ -171,9 +173,12 @@ export function useSelfieVerification(
     const runDetection = () => {
       if (!videoRef.current || isCompleteRef.current) return;
       if (videoRef.current.readyState < 2) return;
+      if (isDetectingRef.current) return; // prevent overlapping calls
 
+      isDetectingRef.current = true;
       const timestamp = performance.now();
       const result = detectForVideo(videoRef.current, timestamp);
+      isDetectingRef.current = false;
       if (!result) return;
 
       const faces = result.faceLandmarks ?? [];

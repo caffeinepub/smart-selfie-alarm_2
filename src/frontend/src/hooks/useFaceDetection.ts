@@ -44,8 +44,8 @@ export type FaceDetectionError =
 
 // ─── Detection thresholds ────────────────────────────────────────────────────
 
-// Detection interval: 700ms for fast, stable detection
-const DETECTION_INTERVAL_MS = 700;
+// Detection interval: 750ms for fast, stable detection
+const DETECTION_INTERVAL_MS = 750;
 
 // Stability windows (ms) before a task is considered complete
 // Kept short so tasks advance quickly after detection
@@ -94,6 +94,7 @@ export function useFaceDetection(
     null,
   );
   const isCompleteRef = useRef(false);
+  const isDetectingLockRef = useRef(false); // prevent overlapping detection calls
   const taskIndexRef = useRef(0);
 
   // Landmark smoothing buffer
@@ -251,8 +252,9 @@ export function useFaceDetection(
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "user",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 24 },
           },
           audio: false,
         });
@@ -308,9 +310,12 @@ export function useFaceDetection(
     const runDetection = () => {
       if (!videoRef.current || isCompleteRef.current) return;
       if (videoRef.current.readyState < 2) return;
+      if (isDetectingLockRef.current) return; // prevent overlapping calls
 
+      isDetectingLockRef.current = true;
       const timestamp = performance.now();
       const result = detectForVideo(videoRef.current, timestamp);
+      isDetectingLockRef.current = false;
       if (!result) return;
 
       const faces = result.faceLandmarks ?? [];

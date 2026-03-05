@@ -78,6 +78,7 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
   const [stats, setStats] = useState<AlarmContextType["stats"]>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const firedAlarmsRef = useRef<Set<string>>(new Set());
+  const alarmTriggeredRef = useRef(false);
 
   const fetchAlarms = useCallback(async () => {
     if (!user) return;
@@ -131,10 +132,16 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
         // Don't fire same alarm twice in the same minute
         const alarmKey = `${alarm.id}-${timeKey}`;
         if (firedAlarmsRef.current.has(alarmKey)) continue;
+        if (alarmTriggeredRef.current) continue; // prevent double-trigger
 
         firedAlarmsRef.current.add(alarmKey);
+        alarmTriggeredRef.current = true;
         setActiveAlarm(alarm);
         navigate("/alarm-trigger");
+        // Reset trigger lock after 65 seconds (next minute)
+        setTimeout(() => {
+          alarmTriggeredRef.current = false;
+        }, 65000);
         break;
       }
     };
