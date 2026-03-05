@@ -1,19 +1,17 @@
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Brain, Camera, Clock, Loader2, Music } from "lucide-react";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { ArrowLeft, Brain, Camera, Clock, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
+import { SoundSelector } from "../components/SoundSelector";
 import { Day, VerificationMode } from "../context/AlarmContext";
+import { useAuthContext } from "../context/AuthContext";
 import { useAlarms } from "../hooks/useAlarms";
+import { storage } from "../lib/firebase";
 
 const DAY_ORDER: Day[] = [
   Day.monday,
@@ -35,21 +33,22 @@ const DAY_LABELS: Record<Day, string> = {
   [Day.sunday]: "Sun",
 };
 
-const SOUNDS = ["Radar", "Beacon", "Chime", "Bells", "Classic", "Digital"];
-
 export default function CreateEditAlarmPage() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const { alarms, addAlarm, updateAlarm } = useAlarms();
+  const { user } = useAuthContext();
   const isEdit = !!id;
 
   // timeValue is a string in "HH:MM" 24-hour format
   const [timeValue, setTimeValue] = useState("07:00");
   const [selectedDays, setSelectedDays] = useState<Day[]>([]);
+  const [everyDay, setEveryDay] = useState(false);
   const [verificationMode, setVerificationMode] = useState<VerificationMode>(
-    VerificationMode.mathPuzzle,
+    VerificationMode.selfie,
   );
-  const [sound, setSound] = useState("Radar");
+  const [sound, setSound] = useState("default");
+  const [customSoundUrl, setCustomSoundUrl] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -63,16 +62,31 @@ export default function CreateEditAlarmPage() {
           `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
         );
         setSelectedDays(alarm.repeatDays);
+        setEveryDay(alarm.repeatDays.length === 7);
         setVerificationMode(alarm.verificationMode);
         setSound(alarm.sound);
+        if (alarm.soundUrl) {
+          setCustomSoundUrl(alarm.soundUrl);
+        }
       }
     }
   }, [isEdit, id, alarms]);
 
   const toggleDay = (day: Day) => {
+    // If everyDay is on, clicking a day unchecks everyDay and deselects that day
+    if (everyDay) {
+      setEveryDay(false);
+      setSelectedDays(DAY_ORDER.filter((d) => d !== day));
+      return;
+    }
     setSelectedDays((prev) =>
       prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day],
     );
+  };
+
+  const handleEveryDayToggle = (checked: boolean) => {
+    setEveryDay(checked);
+    setSelectedDays(checked ? [...DAY_ORDER] : []);
   };
 
   const getMinutesSinceMidnight = (): bigint => {
@@ -80,6 +94,18 @@ export default function CreateEditAlarmPage() {
     const h = Number.parseInt(hStr ?? "0", 10);
     const m = Number.parseInt(mStr ?? "0", 10);
     return BigInt(h * 60 + m);
+  };
+
+  const handleSoundUpload = async (file: File): Promise<void> => {
+    if (!user) throw new Error("You must be signed in to upload");
+    const timestamp = Date.now();
+    const storageRef = ref(
+      storage,
+      `alarm-sounds/${user.uid}/${timestamp}-${file.name}`,
+    );
+    await uploadBytes(storageRef, file);
+    const downloadUrl = await getDownloadURL(storageRef);
+    setCustomSoundUrl(downloadUrl);
   };
 
   const handleSave = async () => {
@@ -90,6 +116,8 @@ export default function CreateEditAlarmPage() {
     setSaving(true);
     try {
       const time = getMinutesSinceMidnight();
+      const finalSoundUrl = sound === "custom" ? customSoundUrl : undefined;
+
       if (isEdit && id) {
         const alarm = alarms.find((a) => a.id === id);
         if (alarm) {
@@ -100,13 +128,20 @@ export default function CreateEditAlarmPage() {
             verificationMode,
             sound,
             alarm.enabled,
+            finalSoundUrl,
           );
           toast.success("Alarm updated!");
         } else {
           toast.error("Alarm not found");
         }
       } else {
-        await addAlarm(time, selectedDays, verificationMode, sound);
+        await addAlarm(
+          time,
+          selectedDays,
+          verificationMode,
+          sound,
+          finalSoundUrl,
+        );
         toast.success("Alarm created!");
       }
       navigate("/dashboard");
@@ -149,7 +184,7 @@ export default function CreateEditAlarmPage() {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
-        className="p-4 space-y-5"
+        className="p-4 pb-28 space-y-5"
       >
         {/* Time picker */}
         <div className="glass-card p-5">
@@ -184,6 +219,28 @@ export default function CreateEditAlarmPage() {
         {/* Repeat days */}
         <div className="glass-card p-5">
           <h2 className="font-semibold text-white mb-4">Repeat</h2>
+
+          {/* Every Day toggle */}
+          <div
+            className="flex items-center justify-between px-3 py-2.5 rounded-xl mb-3"
+            style={{
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.06)",
+            }}
+          >
+            <div>
+              <p className="text-sm font-semibold text-white">Every Day</p>
+              <p className="text-xs" style={{ color: "#64748b" }}>
+                Mon – Sun
+              </p>
+            </div>
+            <Switch
+              checked={everyDay}
+              onCheckedChange={handleEveryDayToggle}
+              data-ocid="alarm_form.everyday_switch"
+            />
+          </div>
+
           <div className="grid grid-cols-7 gap-1">
             {DAY_ORDER.map((day) => (
               <button
@@ -215,7 +272,9 @@ export default function CreateEditAlarmPage() {
           <p className="text-xs mt-2" style={{ color: "#475569" }}>
             {selectedDays.length === 0
               ? "One-time alarm (no repeat)"
-              : `Repeats every ${selectedDays.length} day${selectedDays.length > 1 ? "s" : ""}`}
+              : selectedDays.length === 7
+                ? "Repeats every day"
+                : `Repeats every ${selectedDays.length} day${selectedDays.length > 1 ? "s" : ""}`}
           </p>
         </div>
 
@@ -229,7 +288,7 @@ export default function CreateEditAlarmPage() {
               {
                 mode: VerificationMode.mathPuzzle,
                 label: "Live Face Tasks",
-                desc: "Blink, smile, turn head",
+                desc: "Open mouth, smile, head turn",
                 icon: Brain,
               },
               {
@@ -281,27 +340,14 @@ export default function CreateEditAlarmPage() {
           </div>
         </div>
 
-        {/* Sound */}
+        {/* Sound selector */}
         <div className="glass-card p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Music className="w-4 h-4" style={{ color: "#7c3aed" }} />
-            <h2 className="font-semibold text-white">Alarm Sound</h2>
-          </div>
-          <Select value={sound} onValueChange={setSound}>
-            <SelectTrigger
-              className="rounded-xl border-white/10 bg-white/5 text-white"
-              data-ocid="alarm_form.sound_select"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="rounded-xl border-white/10 bg-[#1a1a2e]">
-              {SOUNDS.map((s) => (
-                <SelectItem key={s} value={s} className="text-white">
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SoundSelector
+            value={sound}
+            onChange={setSound}
+            customSoundUrl={customSoundUrl}
+            onCustomSoundUpload={handleSoundUpload}
+          />
         </div>
 
         {/* Save button */}

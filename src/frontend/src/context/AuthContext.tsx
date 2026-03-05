@@ -7,6 +7,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   signOut,
+  updateProfile,
 } from "firebase/auth";
 import {
   type ReactNode,
@@ -24,6 +25,7 @@ interface AuthContextType {
   signup: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
+  updateDisplayName: (name: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -76,9 +78,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const updateDisplayName = async (name: string) => {
+    if (!auth.currentUser) throw new Error("Not signed in");
+    await updateProfile(auth.currentUser, { displayName: name });
+    // Force re-render by updating state
+    setUser({ ...auth.currentUser });
+  };
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, signup, logout, signInWithGoogle }}
+      value={{
+        user,
+        loading,
+        login,
+        signup,
+        logout,
+        signInWithGoogle,
+        updateDisplayName,
+      }}
     >
       {children}
     </AuthContext.Provider>

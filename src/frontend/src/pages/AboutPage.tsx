@@ -50,7 +50,7 @@ const techStack = [
 
 export default function AboutPage() {
   return (
-    <div className="min-h-full" style={{ backgroundColor: "#0a0a0f" }}>
+    <div className="min-h-full pb-24" style={{ backgroundColor: "#0a0a0f" }}>
       {/* Hero */}
       <div
         className="relative overflow-hidden px-6 pt-12 pb-10"
@@ -95,6 +95,19 @@ export default function AboutPage() {
           >
             Smart Selfie Alarm
           </h1>
+          {/* Version badge */}
+          <div className="flex items-center justify-center mb-3">
+            <span
+              className="px-3 py-1 rounded-full text-xs font-bold"
+              style={{
+                background: "rgba(124,58,237,0.15)",
+                border: "1px solid rgba(124,58,237,0.3)",
+                color: "#a78bfa",
+              }}
+            >
+              v1.0.0
+            </span>
+          </div>
           <p
             className="text-sm font-semibold uppercase tracking-widest mb-5"
             style={{ color: "#7c3aed" }}
@@ -184,6 +197,41 @@ export default function AboutPage() {
                 <p className="text-sm font-semibold text-white">{value}</p>
               </div>
             ))}
+          </div>
+        </motion.div>
+
+        {/* Developer info */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.5 }}
+          className="glass-card p-5"
+        >
+          <h2 className="text-lg font-bold text-white mb-3">Developer</h2>
+          <div
+            className="flex items-center gap-3 p-3 rounded-xl"
+            style={{ background: "rgba(255,255,255,0.03)" }}
+          >
+            <div
+              className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{
+                background: "linear-gradient(135deg, #7c3aed, #6366f1)",
+              }}
+            >
+              <span className="text-white font-bold text-sm">S</span>
+            </div>
+            <div>
+              <p className="font-semibold text-white text-sm">
+                Smart Selfie Alarm Team
+              </p>
+              <a
+                href="mailto:smartselfiealarm123@gmail.com"
+                className="text-xs"
+                style={{ color: "#7c3aed" }}
+              >
+                smartselfiealarm123@gmail.com
+              </a>
+            </div>
           </div>
         </motion.div>
 

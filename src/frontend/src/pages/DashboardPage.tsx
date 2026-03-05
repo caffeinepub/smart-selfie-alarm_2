@@ -119,7 +119,7 @@ export default function DashboardPage() {
 
   return (
     <div
-      className="min-h-full"
+      className="min-h-full pb-24"
       style={{ backgroundColor: "#0a0a0f" }}
       data-ocid="dashboard.page"
     >

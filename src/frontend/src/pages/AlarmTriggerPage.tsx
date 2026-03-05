@@ -1,38 +1,28 @@
 import { Button } from "@/components/ui/button";
-import { AlarmClock, Eye } from "lucide-react";
+import { AlarmClock, Eye, Moon } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAlarms } from "../hooks/useAlarms";
+import {
+  playAlarmSound,
+  playAlarmSoundFromUrl,
+  stopAlarmSound,
+} from "../lib/alarmSounds";
 
-function createBeepAudio(): (() => void) | null {
+function getAlarmVolume(): number {
   try {
-    const AudioContextClass =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext })
-        .webkitAudioContext;
-    if (!AudioContextClass) return null;
-    const audioCtx = new AudioContextClass();
-
-    function playBeep() {
-      const oscillator = audioCtx.createOscillator();
-      const gainNode = audioCtx.createGain();
-      oscillator.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
-      oscillator.frequency.value = 880;
-      oscillator.type = "sine";
-      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(
-        0.001,
-        audioCtx.currentTime + 0.5,
-      );
-      oscillator.start();
-      oscillator.stop(audioCtx.currentTime + 0.5);
-    }
-
-    return playBeep;
+    return Number(localStorage.getItem("alarmVolume") ?? "80") / 100;
   } catch {
-    return null;
+    return 0.8;
+  }
+}
+
+function isSnoozeEnabled(): boolean {
+  try {
+    return localStorage.getItem("snoozeEnabled") === "true";
+  } catch {
+    return false;
   }
 }
 
@@ -47,10 +37,11 @@ function useCurrentTime() {
 
 export default function AlarmTriggerPage() {
   const navigate = useNavigate();
-  const { activeAlarm } = useAlarms();
-  const audioIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const playBeepRef = useRef<(() => void) | null>(null);
+  const { activeAlarm, dismissActiveAlarm } = useAlarms();
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const now = useCurrentTime();
+  const [snoozed, setSnoozed] = useState(false);
+  const snoozeEnabled = isSnoozeEnabled();
 
   const timeStr = now.toLocaleTimeString("en-GB", {
     hour: "2-digit",
@@ -58,21 +49,36 @@ export default function AlarmTriggerPage() {
     hour12: false,
   });
 
+  const stopSound = () => {
+    stopAlarmSound();
+    if (audioElementRef.current) {
+      audioElementRef.current.pause();
+      audioElementRef.current = null;
+    }
+  };
+
+  // Sound plays once on mount and stops on unmount. We use a ref to avoid
+  // re-triggering when activeAlarm changes (alarm data is stable at trigger time).
+  const soundIdRef = useRef(activeAlarm?.sound ?? "default");
+  const soundUrlRef = useRef(activeAlarm?.soundUrl);
+
   useEffect(() => {
-    playBeepRef.current = createBeepAudio();
+    const volume = getAlarmVolume();
+    const soundId = soundIdRef.current;
+    const soundUrl = soundUrlRef.current;
 
-    // Start alarm sound loop
-    const startBeeping = () => {
-      if (playBeepRef.current) {
-        playBeepRef.current();
-      }
-    };
-
-    startBeeping();
-    audioIntervalRef.current = setInterval(startBeeping, 1000);
+    if (soundUrl) {
+      audioElementRef.current = playAlarmSoundFromUrl(soundUrl, volume);
+    } else {
+      playAlarmSound(soundId, volume, true);
+    }
 
     return () => {
-      if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
+      stopAlarmSound();
+      if (audioElementRef.current) {
+        audioElementRef.current.pause();
+        audioElementRef.current = null;
+      }
     };
   }, []);
 
@@ -84,8 +90,23 @@ export default function AlarmTriggerPage() {
   }, [activeAlarm, navigate]);
 
   const handleVerify = () => {
-    if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
     navigate("/verify");
+  };
+
+  const handleSnooze = () => {
+    stopSound();
+    setSnoozed(true);
+    dismissActiveAlarm();
+
+    // Store snooze end time for potential re-trigger logic
+    const snoozeUntil = Date.now() + 5 * 60 * 1000;
+    try {
+      localStorage.setItem("snoozeUntil", String(snoozeUntil));
+    } catch {
+      // ignore
+    }
+
+    navigate("/dashboard");
   };
 
   return (
@@ -175,14 +196,15 @@ export default function AlarmTriggerPage() {
           )}
         </div>
 
-        {/* Verify button */}
+        {/* Buttons */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
+          className="flex flex-col items-center gap-3 w-full px-8"
         >
           <Button
-            className="btn-neon h-14 px-10 text-base font-semibold rounded-2xl gap-2"
+            className="btn-neon h-14 w-full text-base font-semibold rounded-2xl gap-2"
             style={{
               boxShadow: "0 0 30px rgba(124,58,237,0.5)",
             }}
@@ -192,6 +214,18 @@ export default function AlarmTriggerPage() {
             <Eye className="w-5 h-5" />
             Verify I&apos;m Awake
           </Button>
+
+          {snoozeEnabled && !snoozed && (
+            <Button
+              variant="outline"
+              className="h-11 w-full rounded-2xl font-medium gap-2 border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
+              onClick={handleSnooze}
+              data-ocid="trigger.snooze_button"
+            >
+              <Moon className="w-4 h-4" />
+              Snooze 5 minutes
+            </Button>
+          )}
         </motion.div>
 
         <p

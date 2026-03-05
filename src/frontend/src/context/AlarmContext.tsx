@@ -39,6 +39,7 @@ interface AlarmContextType {
     repeatDays: Day[],
     verificationMode: VerificationMode,
     sound: string,
+    soundUrl?: string,
   ) => Promise<void>;
   updateAlarm: (
     id: string,
@@ -47,6 +48,7 @@ interface AlarmContextType {
     verificationMode: VerificationMode,
     sound: string,
     enabled: boolean,
+    soundUrl?: string,
   ) => Promise<void>;
   deleteAlarm: (id: string) => Promise<void>;
   toggleAlarm: (id: string, enabled: boolean) => Promise<void>;
@@ -148,6 +150,7 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
     repeatDays: Day[],
     verificationMode: VerificationMode,
     sound: string,
+    soundUrl?: string,
   ) => {
     if (!user) throw new Error("You must be signed in to create an alarm");
     const newAlarm = await createAlarmInFirestore(
@@ -156,6 +159,7 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
       repeatDays,
       verificationMode,
       sound,
+      soundUrl,
     );
     setAlarms((prev) =>
       [...prev, newAlarm].sort((a, b) => Number(a.time) - Number(b.time)),
@@ -169,6 +173,7 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
     verificationMode: VerificationMode,
     sound: string,
     enabled: boolean,
+    soundUrl?: string,
   ) => {
     await updateAlarmInFirestore(
       id,
@@ -177,12 +182,21 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
       verificationMode,
       sound,
       enabled,
+      soundUrl,
     );
     setAlarms((prev) =>
       prev
         .map((a) =>
           a.id === id
-            ? { ...a, time, repeatDays, verificationMode, sound, enabled }
+            ? {
+                ...a,
+                time,
+                repeatDays,
+                verificationMode,
+                sound,
+                enabled,
+                ...(soundUrl ? { soundUrl } : {}),
+              }
             : a,
         )
         .sort((a, b) => Number(a.time) - Number(b.time)),

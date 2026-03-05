@@ -1,57 +1,76 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Landmark,
+  averageLandmarks,
+  calculateAvgEAR,
+  calculateEyebrowEyeDistance,
+  calculateFaceSize,
+  calculateFaceWidthPx,
+  calculateMouthHeight,
+  calculateMouthWidth,
   closeFaceMesh,
-  detectBlink,
-  detectEyesOpen,
-  detectHeadTurnLeft,
-  detectHeadTurnRight,
-  detectSmile,
+  getNoseOffsetFraction,
   initFaceMesh,
-} from "../lib/faceDetection";
+  sendVideoFrame,
+} from "../lib/faceMesh";
 
 export type VerificationTask =
-  | "blink"
-  | "turn_right"
-  | "turn_left"
+  | "open_mouth"
+  | "raise_eyebrows"
   | "smile"
-  | "eyes_open"
-  | "selfie";
+  | "turn_head";
 
 export const TASK_LIST: VerificationTask[] = [
-  "blink",
-  "turn_right",
-  "turn_left",
+  "raise_eyebrows",
   "smile",
-  "eyes_open",
-  "selfie",
+  "turn_head",
+  "open_mouth",
 ];
 
 export const TASK_LABELS: Record<VerificationTask, string> = {
-  blink: "Blink your eyes",
-  turn_right: "Turn your head right",
-  turn_left: "Turn your head left",
-  smile: "Smile!",
-  eyes_open: "Keep eyes open for 2 seconds",
-  selfie: "Take a selfie",
+  raise_eyebrows: "Raise your eyebrows",
+  smile: "Give a small smile",
+  turn_head: "Turn head slightly right",
+  open_mouth: "Open your mouth",
 };
 
 export const TASK_ICONS: Record<VerificationTask, string> = {
-  blink: "👁️",
-  turn_right: "👉",
-  turn_left: "👈",
+  raise_eyebrows: "🤨",
   smile: "😊",
-  eyes_open: "👀",
-  selfie: "📸",
+  turn_head: "↔️",
+  open_mouth: "😮",
 };
 
 export type FaceDetectionError =
   | "camera_denied"
   | "no_face"
   | "multiple_faces"
-  | "slow_device"
+  | "face_too_far"
+  | "selfie_failed"
   | "init_failed"
   | null;
+
+// ─── Detection thresholds ────────────────────────────────────────────────────
+
+/** Detection interval: 600ms — responsive yet not CPU-heavy */
+const DETECTION_INTERVAL_MS = 600;
+
+/** Head turn: nose must shift > 13% of face width from center */
+const HEAD_TURN_FRACTION = 0.13;
+
+/** Stability window per task (ms) before marking as complete */
+const STABILITY_MS = 300;
+
+/** Minimum face inter-ocular distance (normalized) */
+const MIN_FACE_SIZE = 0.13;
+
+/** Minimum face pixel width on screen */
+const MIN_FACE_WIDTH_PX = 120;
+
+/** Keep last 4 frames for landmark smoothing */
+const LANDMARK_HISTORY_SIZE = 4;
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface UseFaceDetectionReturn {
   videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -61,16 +80,20 @@ interface UseFaceDetectionReturn {
   isDetecting: boolean;
   isComplete: boolean;
   error: FaceDetectionError;
-  selfieDataUrl: string | null;
-  eyesOpenDuration: number;
+  selfieCapturing: boolean;
   startDetection: () => Promise<void>;
   stopDetection: () => void;
   faceCount: number;
+  /** 0–1 progress of stability hold window for current task */
+  stabilityProgress: number;
 }
+
+// suppress unused import warning
+void calculateAvgEAR;
 
 export function useFaceDetection(
   onComplete: () => void,
-  cameraFacing: "user" | "environment" = "user",
+  _cameraFacing: "user" | "environment" = "user",
 ): UseFaceDetectionReturn {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -78,14 +101,23 @@ export function useFaceDetection(
   const detectionIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
-  const faceMeshRef = useRef<{
-    send: (opts: { image: HTMLVideoElement }) => Promise<void>;
-    close: () => void;
-  } | null>(null);
-  const currentLandmarksRef = useRef<Landmark[][] | null>(null);
-  const eyesOpenStartRef = useRef<number | null>(null);
-  const detectionStartTimeRef = useRef<number>(0);
+  const isCompleteRef = useRef(false);
+  const taskIndexRef = useRef(0);
+  const isRunningRef = useRef(false);
 
+  // Landmark smoothing buffer
+  const landmarkHistoryRef = useRef<Landmark[][]>([]);
+
+  // Baseline measurements (captured on first valid frame)
+  const baselineCapturedRef = useRef(false);
+  const baselineMouthWidthRef = useRef<number>(0);
+  const baselineMouthHeightRef = useRef<number>(0);
+  const baselineEyebrowDistRef = useRef<number>(0);
+
+  // Stability tracking
+  const taskValidSinceRef = useRef<number | null>(null);
+
+  // State
   const [currentTask, setCurrentTask] = useState<VerificationTask>(
     TASK_LIST[0],
   );
@@ -93,12 +125,8 @@ export function useFaceDetection(
   const [isDetecting, setIsDetecting] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState<FaceDetectionError>(null);
-  const [selfieDataUrl, setSelfieDataUrl] = useState<string | null>(null);
   const [faceCount, setFaceCount] = useState(0);
-  const [eyesOpenDuration, setEyesOpenDuration] = useState(0);
-  const intervalMs = useRef(800);
-  const taskIndexRef = useRef(0);
-  const isCompleteRef = useRef(false);
+  const [stabilityProgress, setStabilityProgress] = useState(0);
 
   const stopDetection = useCallback(() => {
     if (detectionIntervalRef.current) {
@@ -106,202 +134,243 @@ export function useFaceDetection(
       detectionIntervalRef.current = null;
     }
     if (streamRef.current) {
-      for (const t of streamRef.current.getTracks()) {
-        t.stop();
-      }
+      for (const t of streamRef.current.getTracks()) t.stop();
       streamRef.current = null;
     }
+    isRunningRef.current = false;
     closeFaceMesh();
-    faceMeshRef.current = null;
     setIsDetecting(false);
   }, []);
 
-  const advanceTask = useCallback(
-    (nextIndex: number) => {
-      if (isCompleteRef.current) return;
-      if (nextIndex >= TASK_LIST.length) {
-        isCompleteRef.current = true;
-        setIsComplete(true);
-        stopDetection();
-        onComplete();
-        return;
-      }
-      taskIndexRef.current = nextIndex;
-      setTaskIndex(nextIndex);
+  const advanceTask = useCallback((nextIndex: number) => {
+    if (isCompleteRef.current) return;
+    taskIndexRef.current = nextIndex;
+    setTaskIndex(nextIndex);
+    taskValidSinceRef.current = null;
+    setStabilityProgress(0);
+    if (nextIndex < TASK_LIST.length) {
       setCurrentTask(TASK_LIST[nextIndex]);
-      eyesOpenStartRef.current = null;
-      setEyesOpenDuration(0);
-    },
-    [onComplete, stopDetection],
-  );
+    }
+  }, []);
 
   const checkCurrentTask = useCallback(
-    (landmarks: Landmark[], count: number) => {
-      const task = TASK_LIST[taskIndexRef.current];
-      if (!task) return;
+    (smoothedLandmarks: Landmark[]) => {
+      const taskIdx = taskIndexRef.current;
 
-      if (count === 0) return; // no face detected
-      if (count > 1) return; // multiple faces
+      // All tasks done — call onComplete immediately
+      if (taskIdx >= TASK_LIST.length) {
+        if (!isCompleteRef.current) {
+          isCompleteRef.current = true;
+          setIsComplete(true);
+          stopDetection();
+          onComplete();
+        }
+        return;
+      }
+
+      const task = TASK_LIST[taskIdx];
+      const now = Date.now();
+      let taskValid = false;
 
       switch (task) {
-        case "blink":
-          if (detectBlink(landmarks)) advanceTask(taskIndexRef.current + 1);
-          break;
-        case "turn_right":
-          if (detectHeadTurnRight(landmarks))
-            advanceTask(taskIndexRef.current + 1);
-          break;
-        case "turn_left":
-          if (detectHeadTurnLeft(landmarks))
-            advanceTask(taskIndexRef.current + 1);
-          break;
-        case "smile":
-          if (detectSmile(landmarks)) advanceTask(taskIndexRef.current + 1);
-          break;
-        case "eyes_open": {
-          const eyesOpen = detectEyesOpen(landmarks);
-          if (eyesOpen) {
-            if (!eyesOpenStartRef.current) {
-              eyesOpenStartRef.current = Date.now();
-            }
-            const elapsed = (Date.now() - eyesOpenStartRef.current) / 1000;
-            setEyesOpenDuration(Math.min(elapsed, 2));
-            if (elapsed >= 2) {
-              advanceTask(taskIndexRef.current + 1);
-            }
-          } else {
-            eyesOpenStartRef.current = null;
-            setEyesOpenDuration(0);
-          }
+        case "raise_eyebrows": {
+          const dist = calculateEyebrowEyeDistance(smoothedLandmarks);
+          const baseline = baselineEyebrowDistRef.current;
+          taskValid = baseline > 0 ? dist > baseline * 1.15 : dist > 0.035;
           break;
         }
-        case "selfie": {
-          // Capture canvas frame as selfie
-          if (canvasRef.current && videoRef.current) {
-            const canvas = canvasRef.current;
-            const ctx = canvas.getContext("2d");
-            if (ctx) {
-              canvas.width = videoRef.current.videoWidth;
-              canvas.height = videoRef.current.videoHeight;
-              ctx.drawImage(videoRef.current, 0, 0);
-              const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
-              setSelfieDataUrl(dataUrl);
-              advanceTask(taskIndexRef.current + 1);
-            }
-          }
+
+        case "smile": {
+          const mouthWidth = calculateMouthWidth(smoothedLandmarks);
+          const baseline = baselineMouthWidthRef.current;
+          taskValid =
+            baseline > 0 ? mouthWidth > baseline * 1.1 : mouthWidth > 0.045;
+          break;
+        }
+
+        case "turn_head": {
+          const offset = Math.abs(getNoseOffsetFraction(smoothedLandmarks));
+          taskValid = offset > HEAD_TURN_FRACTION;
+          break;
+        }
+
+        case "open_mouth": {
+          const mouthHeight = calculateMouthHeight(smoothedLandmarks);
+          const baseline = baselineMouthHeightRef.current;
+          taskValid =
+            baseline > 0 ? mouthHeight > baseline * 1.35 : mouthHeight > 0.018;
           break;
         }
       }
+
+      if (taskValid) {
+        if (taskValidSinceRef.current === null) {
+          taskValidSinceRef.current = now;
+        }
+        const heldFor = now - taskValidSinceRef.current;
+        const progress = Math.min(heldFor / STABILITY_MS, 1);
+        setStabilityProgress(progress);
+
+        if (heldFor >= STABILITY_MS) {
+          taskValidSinceRef.current = null;
+          setStabilityProgress(0);
+          advanceTask(taskIdx + 1);
+        }
+      } else {
+        if (taskValidSinceRef.current !== null) {
+          taskValidSinceRef.current = null;
+          setStabilityProgress(0);
+        }
+      }
     },
-    [advanceTask],
+    [advanceTask, stopDetection, onComplete],
   );
 
   const startDetection = useCallback(async () => {
     setError(null);
     taskIndexRef.current = 0;
     isCompleteRef.current = false;
+    isRunningRef.current = false;
     setTaskIndex(0);
     setCurrentTask(TASK_LIST[0]);
     setIsComplete(false);
-    eyesOpenStartRef.current = null;
-    setEyesOpenDuration(0);
+    setFaceCount(0);
+    setStabilityProgress(0);
+    landmarkHistoryRef.current = [];
+    baselineCapturedRef.current = false;
+    baselineMouthWidthRef.current = 0;
+    baselineMouthHeightRef.current = 0;
+    baselineEyebrowDistRef.current = 0;
+    taskValidSinceRef.current = null;
 
-    // Get camera stream
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: cameraFacing, width: 640, height: 480 },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+    // Get front camera — lightweight resolution for mobile
+    let stream: MediaStream | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "user",
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+          },
+          audio: false,
+        });
+        break;
+      } catch (err) {
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
+        else {
+          console.error("Camera failed:", err);
+          setError("camera_denied");
+          return;
+        }
       }
-    } catch (err) {
-      console.error("Camera error:", err);
+    }
+
+    if (!stream) {
       setError("camera_denied");
       return;
     }
 
-    // Initialize FaceMesh
-    try {
-      const fm = await initFaceMesh((results) => {
-        const faces = results.multiFaceLandmarks ?? [];
-        currentLandmarksRef.current = faces;
-        const count = faces.length;
-        setFaceCount(count);
+    streamRef.current = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      try {
+        await videoRef.current.play();
+      } catch {
+        /* ignore autoplay restriction */
+      }
+    }
 
-        if (count === 0) {
-          // Don't set error, just show warning inline
-        } else if (count > 1) {
-          // Multiple faces warning
-        } else if (faces[0]) {
-          // Draw face mesh on canvas
-          if (canvasRef.current && videoRef.current) {
-            const canvas = canvasRef.current;
-            const ctx = canvas.getContext("2d");
-            if (ctx) {
-              canvas.width = videoRef.current.videoWidth;
-              canvas.height = videoRef.current.videoHeight;
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
-              // Draw subtle dots for landmarks
-              ctx.fillStyle = "rgba(124, 58, 237, 0.6)";
-              for (const lm of faces[0]) {
-                ctx.beginPath();
-                ctx.arc(
-                  lm.x * canvas.width,
-                  lm.y * canvas.height,
-                  1.5,
-                  0,
-                  Math.PI * 2,
-                );
-                ctx.fill();
-              }
-            }
-          }
-          checkCurrentTask(faces[0], count);
-        }
-      });
-      faceMeshRef.current = fm;
+    // Wait for video to be ready
+    await new Promise<void>((resolve) => {
+      const v = videoRef.current;
+      if (!v || v.readyState >= 2) {
+        resolve();
+        return;
+      }
+      v.onloadeddata = () => resolve();
+    });
+
+    // Initialize FaceMesh (loads WASM + model from CDN)
+    try {
+      await initFaceMesh();
     } catch {
       setError("init_failed");
       return;
     }
 
     setIsDetecting(true);
+    isRunningRef.current = true;
 
-    // Start detection interval
     const runDetection = async () => {
-      if (!videoRef.current || !faceMeshRef.current || isCompleteRef.current)
+      if (!videoRef.current || isCompleteRef.current || !isRunningRef.current)
         return;
       if (videoRef.current.readyState < 2) return;
 
-      const start = Date.now();
-      try {
-        await faceMeshRef.current.send({ image: videoRef.current });
-      } catch {
-        // ignore send errors
-      }
-      const elapsed = Date.now() - start;
+      const landmarks = await sendVideoFrame(videoRef.current);
 
-      // Slow device fallback
-      if (elapsed > 1200 && intervalMs.current === 800) {
-        intervalMs.current = 1500;
-        if (detectionIntervalRef.current) {
-          clearInterval(detectionIntervalRef.current);
-          detectionIntervalRef.current = setInterval(runDetection, 1500);
+      if (!isRunningRef.current || isCompleteRef.current) return;
+
+      if (!landmarks || landmarks.length === 0) {
+        setFaceCount(0);
+        setError("no_face");
+        taskValidSinceRef.current = null;
+        setStabilityProgress(0);
+        return;
+      }
+
+      setFaceCount(1);
+
+      // Face size check
+      const faceSize = calculateFaceSize(landmarks);
+      if (faceSize < MIN_FACE_SIZE) {
+        setError("face_too_far");
+        taskValidSinceRef.current = null;
+        setStabilityProgress(0);
+        return;
+      }
+
+      // Face pixel width check
+      const videoWidth = videoRef.current?.videoWidth ?? 0;
+      if (videoWidth > 0) {
+        const faceWidthPx = calculateFaceWidthPx(landmarks, videoWidth);
+        if (faceWidthPx < MIN_FACE_WIDTH_PX) {
+          setError("face_too_far");
+          taskValidSinceRef.current = null;
+          setStabilityProgress(0);
+          return;
         }
       }
-      detectionStartTimeRef.current = start;
+
+      setError(null);
+
+      // Add to landmark history for smoothing
+      const history = landmarkHistoryRef.current;
+      history.push(landmarks);
+      if (history.length > LANDMARK_HISTORY_SIZE) history.shift();
+
+      const smoothed =
+        history.length >= 2 ? averageLandmarks(history) : landmarks;
+
+      // Capture baseline on first valid frame
+      if (!baselineCapturedRef.current) {
+        baselineMouthWidthRef.current = calculateMouthWidth(smoothed);
+        baselineMouthHeightRef.current = calculateMouthHeight(smoothed);
+        baselineEyebrowDistRef.current = calculateEyebrowEyeDistance(smoothed);
+        baselineCapturedRef.current = true;
+      }
+
+      checkCurrentTask(smoothed);
     };
 
-    detectionIntervalRef.current = setInterval(
-      runDetection,
-      intervalMs.current,
-    );
-  }, [cameraFacing, checkCurrentTask]);
+    // Use setInterval — prevents overlapping detection calls
+    detectionIntervalRef.current = setInterval(() => {
+      // Wrap in a guard to prevent multiple simultaneous detections
+      if (!isRunningRef.current) return;
+      runDetection();
+    }, DETECTION_INTERVAL_MS);
+  }, [checkCurrentTask]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopDetection();
@@ -316,10 +385,10 @@ export function useFaceDetection(
     isDetecting,
     isComplete,
     error,
-    selfieDataUrl,
-    eyesOpenDuration,
+    selfieCapturing: false, // no selfie step in live mode anymore
     startDetection,
     stopDetection,
     faceCount,
+    stabilityProgress,
   };
 }

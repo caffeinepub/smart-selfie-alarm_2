@@ -21,6 +21,7 @@ export interface FirestoreAlarm {
   repeatDays: Day[];
   verificationMode: VerificationMode;
   sound: string;
+  soundUrl?: string;
   enabled: boolean;
   createdAt: Date;
 }
@@ -36,6 +37,7 @@ function docToAlarm(
     repeatDays: (data.repeatDays as string[]).map((d) => d as Day),
     verificationMode: data.verificationMode as VerificationMode,
     sound: data.sound as string,
+    ...(data.soundUrl ? { soundUrl: data.soundUrl as string } : {}),
     enabled: data.enabled as boolean,
     createdAt:
       data.createdAt instanceof Timestamp
@@ -61,6 +63,7 @@ export async function createAlarmInFirestore(
   repeatDays: Day[],
   verificationMode: VerificationMode,
   sound: string,
+  soundUrl?: string,
 ): Promise<FirestoreAlarm> {
   const docRef = await addDoc(collection(db, "alarms"), {
     userId,
@@ -68,6 +71,7 @@ export async function createAlarmInFirestore(
     repeatDays: repeatDays as string[],
     verificationMode: verificationMode as string,
     sound,
+    ...(soundUrl ? { soundUrl } : {}),
     enabled: true,
     createdAt: new Date(),
   });
@@ -78,6 +82,7 @@ export async function createAlarmInFirestore(
     repeatDays,
     verificationMode,
     sound,
+    ...(soundUrl ? { soundUrl } : {}),
     enabled: true,
     createdAt: new Date(),
   };
@@ -90,6 +95,7 @@ export async function updateAlarmInFirestore(
   verificationMode: VerificationMode,
   sound: string,
   enabled: boolean,
+  soundUrl?: string,
 ): Promise<void> {
   const docRef = doc(db, "alarms", alarmDocId);
   await updateDoc(docRef, {
@@ -98,6 +104,7 @@ export async function updateAlarmInFirestore(
     verificationMode: verificationMode as string,
     sound,
     enabled,
+    ...(soundUrl ? { soundUrl } : {}),
   });
 }
 

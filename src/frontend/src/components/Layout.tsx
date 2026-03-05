@@ -1,12 +1,13 @@
 import { cn } from "@/lib/utils";
 import {
   AlarmClock,
+  Bell,
   Home,
   Info,
-  LayoutDashboard,
   Mail,
-  Plus,
   Settings,
+  StopCircle,
+  Timer,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
@@ -17,8 +18,9 @@ interface LayoutProps {
 
 const navItems = [
   { to: "/home", label: "Home", icon: Home },
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/alarm/new", label: "Add Alarm", icon: Plus },
+  { to: "/dashboard", label: "Alarms", icon: Bell },
+  { to: "/timer", label: "Timer", icon: Timer },
+  { to: "/stopwatch", label: "Stopwatch", icon: StopCircle },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/about", label: "About", icon: Info },
   { to: "/contact", label: "Contact", icon: Mail },
@@ -26,8 +28,9 @@ const navItems = [
 
 const bottomNavItems = [
   { to: "/home", label: "Home", icon: Home },
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/alarm/new", label: "Add", icon: Plus },
+  { to: "/dashboard", label: "Alarms", icon: Bell },
+  { to: "/timer", label: "Timer", icon: Timer },
+  { to: "/stopwatch", label: "Watch", icon: StopCircle },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -43,10 +46,7 @@ export function Layout({ children }: LayoutProps) {
   }
 
   return (
-    <div
-      className="flex h-screen overflow-hidden"
-      style={{ backgroundColor: "#0a0a0f" }}
-    >
+    <div className="flex h-screen" style={{ backgroundColor: "#0a0a0f" }}>
       {/* Desktop sidebar */}
       <aside
         className="hidden md:flex flex-col w-60 flex-shrink-0 border-r"
@@ -99,10 +99,10 @@ export function Layout({ children }: LayoutProps) {
                           }
                         : {}
                     }
-                    data-ocid={`nav.${label.toLowerCase().replace(" ", "_")}.link`}
+                    data-ocid={`nav.${label.toLowerCase().replace(/\s+/g, "_")}.link`}
                   >
                     <Icon
-                      className="w-4.5 h-4.5 flex-shrink-0"
+                      className="flex-shrink-0"
                       style={{
                         color: isActive ? "#a78bfa" : undefined,
                         width: "18px",
@@ -110,18 +110,6 @@ export function Layout({ children }: LayoutProps) {
                       }}
                     />
                     <span className="text-sm font-medium">{label}</span>
-                    {to === "/alarm/new" && (
-                      <div
-                        className="ml-auto w-5 h-5 rounded-md flex items-center justify-center"
-                        style={{
-                          background:
-                            "linear-gradient(135deg, #7c3aed, #6366f1)",
-                          boxShadow: "0 0 8px rgba(124,58,237,0.3)",
-                        }}
-                      >
-                        <Plus className="w-3 h-3 text-white" />
-                      </div>
-                    )}
                   </div>
                 )}
               </NavLink>
@@ -153,7 +141,7 @@ export function Layout({ children }: LayoutProps) {
 
       {/* Mobile bottom nav */}
       <nav
-        className="fixed bottom-0 inset-x-0 md:hidden z-40 px-4 py-2"
+        className="fixed bottom-0 inset-x-0 md:hidden z-40"
         style={{
           backgroundColor: "rgba(10, 10, 15, 0.95)",
           backdropFilter: "blur(16px)",
@@ -161,51 +149,35 @@ export function Layout({ children }: LayoutProps) {
           borderTop: "1px solid rgba(255,255,255,0.06)",
         }}
       >
-        <div className="flex items-center justify-around">
+        <div className="flex items-stretch h-16">
           {bottomNavItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
               className="flex-1"
-              data-ocid={`nav.${label.toLowerCase().replace(" ", "_")}.link`}
+              data-ocid={`nav.${label.toLowerCase().replace(/\s+/g, "_")}.link`}
             >
               {({ isActive }) => (
-                <div className="flex flex-col items-center gap-1 py-1">
-                  {to === "/alarm/new" ? (
-                    <div
-                      className="w-12 h-12 rounded-2xl flex items-center justify-center -mt-6"
-                      style={{
-                        background: "linear-gradient(135deg, #7c3aed, #6366f1)",
-                        boxShadow: "0 0 20px rgba(124, 58, 237, 0.5)",
-                        border: "3px solid #0a0a0f",
-                      }}
-                      data-ocid="nav.add.button"
-                    >
-                      <Icon className="w-5 h-5 text-white" />
-                    </div>
-                  ) : (
-                    <div
-                      className="w-7 h-7 rounded-lg flex items-center justify-center"
-                      style={{
-                        background: isActive
-                          ? "rgba(124,58,237,0.2)"
-                          : "transparent",
-                      }}
-                    >
-                      <Icon
-                        className="w-5 h-5"
-                        style={{ color: isActive ? "#a78bfa" : "#64748b" }}
-                      />
-                    </div>
-                  )}
-                  {to !== "/alarm/new" && (
-                    <span
-                      className="text-xs font-medium"
+                <div className="flex flex-col items-center justify-center gap-0.5 h-full">
+                  <div
+                    className="w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-150"
+                    style={{
+                      background: isActive
+                        ? "rgba(124,58,237,0.2)"
+                        : "transparent",
+                    }}
+                  >
+                    <Icon
+                      className="w-5 h-5"
                       style={{ color: isActive ? "#a78bfa" : "#64748b" }}
-                    >
-                      {label}
-                    </span>
-                  )}
+                    />
+                  </div>
+                  <span
+                    className="text-[10px] font-medium leading-none"
+                    style={{ color: isActive ? "#a78bfa" : "#64748b" }}
+                  >
+                    {label}
+                  </span>
                 </div>
               )}
             </NavLink>

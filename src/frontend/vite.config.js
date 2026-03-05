@@ -18,9 +18,6 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
     minify: false,
-    rollupOptions: {
-      external: ["@mediapipe/face_mesh"],
-    },
   },
   css: {
     postcss: "./postcss.config.js",

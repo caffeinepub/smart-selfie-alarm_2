@@ -22,7 +22,10 @@ import ContactPage from "./pages/ContactPage";
 import CreateEditAlarmPage from "./pages/CreateEditAlarmPage";
 import DashboardPage from "./pages/DashboardPage";
 import HomePage from "./pages/HomePage";
+import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import SettingsPage from "./pages/SettingsPage";
+import StopwatchPage from "./pages/StopwatchPage";
+import TimerPage from "./pages/TimerPage";
 import VerificationPage from "./pages/VerificationPage";
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -48,13 +51,16 @@ function AppRoutes() {
     const titles: Record<string, string> = {
       "/": "Smart Selfie Alarm — Sign In",
       "/home": "Home — Smart Selfie Alarm",
-      "/dashboard": "Dashboard — Smart Selfie Alarm",
+      "/dashboard": "Alarms — Smart Selfie Alarm",
       "/alarm/new": "New Alarm — Smart Selfie Alarm",
       "/alarm-trigger": "Wake Up! — Smart Selfie Alarm",
       "/verify": "Verify Awake — Smart Selfie Alarm",
       "/settings": "Settings — Smart Selfie Alarm",
       "/about": "About — Smart Selfie Alarm",
       "/contact": "Contact — Smart Selfie Alarm",
+      "/timer": "Timer — Smart Selfie Alarm",
+      "/stopwatch": "Stopwatch — Smart Selfie Alarm",
+      "/privacy": "Privacy Policy — Smart Selfie Alarm",
     };
     document.title = titles[location.pathname] ?? "Smart Selfie Alarm";
   }, [location.pathname]);
@@ -82,6 +88,7 @@ function AppRoutes() {
             />
             <Route path="/about" element={<AboutPage />} />
             <Route path="/contact" element={<ContactPage />} />
+            <Route path="/privacy" element={<PrivacyPolicyPage />} />
 
             {/* Protected routes */}
             <Route
@@ -137,6 +144,22 @@ function AppRoutes() {
               element={
                 <ProtectedRoute>
                   <SettingsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/timer"
+              element={
+                <ProtectedRoute>
+                  <TimerPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/stopwatch"
+              element={
+                <ProtectedRoute>
+                  <StopwatchPage />
                 </ProtectedRoute>
               }
             />

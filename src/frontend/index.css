@@ -309,3 +309,58 @@
     background: rgba(124, 58, 237, 0.5);
   }
 }
+
+/* ── Light Mode Overrides ── */
+html[data-theme="light"] {
+  --background: 0.97 0.005 280;
+  --foreground: 0.12 0.02 280;
+  --card: 0.99 0.003 280;
+  --card-foreground: 0.12 0.02 280;
+  --muted: 0.94 0.01 280;
+  --muted-foreground: 0.45 0.02 280;
+  --border: 0.12 0.02 280 / 12%;
+  --input: 0.12 0.02 280 / 10%;
+}
+
+html[data-theme="light"] body {
+  background-color: #f0f4f8 !important;
+  color: #1a1a2e;
+}
+
+html[data-theme="light"] [data-ocid$=".page"],
+html[data-theme="light"] .min-h-full {
+  background-color: #f0f4f8 !important;
+}
+
+html[data-theme="light"] .glass-card {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08) !important;
+}
+
+html[data-theme="light"] .glass-card-sm {
+  background: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(0, 0, 0, 0.06) !important;
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.06) !important;
+}
+
+html[data-theme="light"] h1,
+html[data-theme="light"] h2,
+html[data-theme="light"] h3,
+html[data-theme="light"] h4 {
+  color: #1a1a2e;
+}
+
+html[data-theme="light"] .text-white {
+  color: #1a1a2e !important;
+}
+
+html[data-theme="light"] aside {
+  background-color: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+html[data-theme="light"] nav[class*="fixed"] {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
