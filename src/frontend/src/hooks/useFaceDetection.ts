@@ -8,36 +8,28 @@ import {
   calculateFaceWidthPx,
   calculateMouthHeight,
   calculateMouthWidth,
-  closeFaceMesh,
-  getNoseOffsetFraction,
-  initFaceMesh,
-  sendVideoFrame,
-} from "../lib/faceMesh";
+  closeFaceLandmarker,
+  detectForVideo,
+  initFaceLandmarker,
+} from "../lib/faceDetection";
 
-export type VerificationTask =
-  | "open_mouth"
-  | "raise_eyebrows"
-  | "smile"
-  | "turn_head";
+export type VerificationTask = "open_mouth" | "raise_eyebrows" | "smile";
 
 export const TASK_LIST: VerificationTask[] = [
   "raise_eyebrows",
   "smile",
-  "turn_head",
   "open_mouth",
 ];
 
 export const TASK_LABELS: Record<VerificationTask, string> = {
   raise_eyebrows: "Raise your eyebrows",
   smile: "Give a small smile",
-  turn_head: "Turn head slightly right",
   open_mouth: "Open your mouth",
 };
 
 export const TASK_ICONS: Record<VerificationTask, string> = {
   raise_eyebrows: "🤨",
   smile: "😊",
-  turn_head: "↔️",
   open_mouth: "😮",
 };
 
@@ -52,23 +44,26 @@ export type FaceDetectionError =
 
 // ─── Detection thresholds ────────────────────────────────────────────────────
 
-/** Detection interval: 600ms — responsive yet not CPU-heavy */
-const DETECTION_INTERVAL_MS = 600;
+// Detection interval: 700ms for fast, stable detection
+const DETECTION_INTERVAL_MS = 700;
 
-/** Head turn: nose must shift > 13% of face width from center */
-const HEAD_TURN_FRACTION = 0.13;
+// Stability windows (ms) before a task is considered complete
+// Kept short so tasks advance quickly after detection
+const SMILE_STABILITY_MS = 300;
+const EYEBROW_STABILITY_MS = 300;
+const MOUTH_STABILITY_MS = 300;
 
-/** Stability window per task (ms) before marking as complete */
-const STABILITY_MS = 300;
-
-/** Minimum face inter-ocular distance (normalized) */
+// Minimum face size (inter-ocular / image width) — normalized
 const MIN_FACE_SIZE = 0.13;
 
-/** Minimum face pixel width on screen */
+// Minimum face pixel width — reject if face appears too small on screen
 const MIN_FACE_WIDTH_PX = 120;
 
-/** Keep last 4 frames for landmark smoothing */
-const LANDMARK_HISTORY_SIZE = 4;
+// Minimum landmark count for a valid high-confidence frame
+const MIN_LANDMARK_COUNT = 400;
+
+// Landmark history: keep last 5 frames for smoothing
+const LANDMARK_HISTORY_SIZE = 5;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -88,9 +83,6 @@ interface UseFaceDetectionReturn {
   stabilityProgress: number;
 }
 
-// suppress unused import warning
-void calculateAvgEAR;
-
 export function useFaceDetection(
   onComplete: () => void,
   _cameraFacing: "user" | "environment" = "user",
@@ -103,7 +95,6 @@ export function useFaceDetection(
   );
   const isCompleteRef = useRef(false);
   const taskIndexRef = useRef(0);
-  const isRunningRef = useRef(false);
 
   // Landmark smoothing buffer
   const landmarkHistoryRef = useRef<Landmark[][]>([]);
@@ -114,7 +105,7 @@ export function useFaceDetection(
   const baselineMouthHeightRef = useRef<number>(0);
   const baselineEyebrowDistRef = useRef<number>(0);
 
-  // Stability tracking
+  // Stability tracking: when did the current task first become valid?
   const taskValidSinceRef = useRef<number | null>(null);
 
   // State
@@ -126,6 +117,8 @@ export function useFaceDetection(
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState<FaceDetectionError>(null);
   const [faceCount, setFaceCount] = useState(0);
+  // selfieCapturing kept in interface for compat but always false now
+  const [selfieCapturing] = useState(false);
   const [stabilityProgress, setStabilityProgress] = useState(0);
 
   const stopDetection = useCallback(() => {
@@ -137,8 +130,7 @@ export function useFaceDetection(
       for (const t of streamRef.current.getTracks()) t.stop();
       streamRef.current = null;
     }
-    isRunningRef.current = false;
-    closeFaceMesh();
+    closeFaceLandmarker();
     setIsDetecting(false);
   }, []);
 
@@ -146,6 +138,7 @@ export function useFaceDetection(
     if (isCompleteRef.current) return;
     taskIndexRef.current = nextIndex;
     setTaskIndex(nextIndex);
+    // Reset stability for the new task
     taskValidSinceRef.current = null;
     setStabilityProgress(0);
     if (nextIndex < TASK_LIST.length) {
@@ -153,18 +146,21 @@ export function useFaceDetection(
     }
   }, []);
 
-  const checkCurrentTask = useCallback(
-    (smoothedLandmarks: Landmark[]) => {
-      const taskIdx = taskIndexRef.current;
+  // After all tasks complete, call onComplete immediately — no selfie step
+  const completeVerification = useCallback(() => {
+    if (isCompleteRef.current) return;
+    isCompleteRef.current = true;
+    setIsComplete(true);
+    stopDetection();
+    onComplete();
+  }, [onComplete, stopDetection]);
 
-      // All tasks done — call onComplete immediately
+  const checkCurrentTask = useCallback(
+    (smoothedLandmarks: Landmark[], _count: number) => {
+      const taskIdx = taskIndexRef.current;
       if (taskIdx >= TASK_LIST.length) {
-        if (!isCompleteRef.current) {
-          isCompleteRef.current = true;
-          setIsComplete(true);
-          stopDetection();
-          onComplete();
-        }
+        // All tasks done — complete verification immediately
+        completeVerification();
         return;
       }
 
@@ -173,6 +169,14 @@ export function useFaceDetection(
       let taskValid = false;
 
       switch (task) {
+        case "open_mouth": {
+          const mouthHeight = calculateMouthHeight(smoothedLandmarks);
+          const baseline = baselineMouthHeightRef.current;
+          taskValid =
+            baseline > 0 ? mouthHeight > baseline * 1.35 : mouthHeight > 0.055;
+          break;
+        }
+
         case "raise_eyebrows": {
           const dist = calculateEyebrowEyeDistance(smoothedLandmarks);
           const baseline = baselineEyebrowDistRef.current;
@@ -183,54 +187,49 @@ export function useFaceDetection(
         case "smile": {
           const mouthWidth = calculateMouthWidth(smoothedLandmarks);
           const baseline = baselineMouthWidthRef.current;
+          // 1.08x — detects even a small natural smile
           taskValid =
-            baseline > 0 ? mouthWidth > baseline * 1.1 : mouthWidth > 0.045;
-          break;
-        }
-
-        case "turn_head": {
-          const offset = Math.abs(getNoseOffsetFraction(smoothedLandmarks));
-          taskValid = offset > HEAD_TURN_FRACTION;
-          break;
-        }
-
-        case "open_mouth": {
-          const mouthHeight = calculateMouthHeight(smoothedLandmarks);
-          const baseline = baselineMouthHeightRef.current;
-          taskValid =
-            baseline > 0 ? mouthHeight > baseline * 1.35 : mouthHeight > 0.018;
+            baseline > 0 ? mouthWidth > baseline * 1.08 : mouthWidth > 0.042;
           break;
         }
       }
+
+      // Stability window for all tasks
+      const stabilityWindowMs: Record<VerificationTask, number> = {
+        open_mouth: MOUTH_STABILITY_MS,
+        raise_eyebrows: EYEBROW_STABILITY_MS,
+        smile: SMILE_STABILITY_MS,
+      };
+      const requiredMs = stabilityWindowMs[task];
 
       if (taskValid) {
         if (taskValidSinceRef.current === null) {
           taskValidSinceRef.current = now;
         }
         const heldFor = now - taskValidSinceRef.current;
-        const progress = Math.min(heldFor / STABILITY_MS, 1);
+        const progress = Math.min(heldFor / requiredMs, 1);
         setStabilityProgress(progress);
 
-        if (heldFor >= STABILITY_MS) {
+        if (heldFor >= requiredMs) {
           taskValidSinceRef.current = null;
           setStabilityProgress(0);
           advanceTask(taskIdx + 1);
         }
       } else {
+        // Task no longer valid — reset stability
         if (taskValidSinceRef.current !== null) {
           taskValidSinceRef.current = null;
           setStabilityProgress(0);
         }
       }
     },
-    [advanceTask, stopDetection, onComplete],
+    [advanceTask, completeVerification],
   );
 
   const startDetection = useCallback(async () => {
     setError(null);
     taskIndexRef.current = 0;
     isCompleteRef.current = false;
-    isRunningRef.current = false;
     setTaskIndex(0);
     setCurrentTask(TASK_LIST[0]);
     setIsComplete(false);
@@ -243,30 +242,31 @@ export function useFaceDetection(
     baselineEyebrowDistRef.current = 0;
     taskValidSinceRef.current = null;
 
-    // Get front camera — lightweight resolution for mobile
+    // Get camera stream — front camera required, with retry
     let stream: MediaStream | null = null;
+    let lastError: unknown = null;
+
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "user",
-            width: { ideal: 640 },
-            height: { ideal: 480 },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
           },
           audio: false,
         });
         break;
       } catch (err) {
-        if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
-        else {
-          console.error("Camera failed:", err);
-          setError("camera_denied");
-          return;
+        lastError = err;
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 500));
         }
       }
     }
 
     if (!stream) {
+      console.error("Camera failed after 3 attempts:", lastError);
       setError("camera_denied");
       return;
     }
@@ -277,52 +277,69 @@ export function useFaceDetection(
       try {
         await videoRef.current.play();
       } catch {
-        /* ignore autoplay restriction */
+        // ignore autoplay restriction
       }
     }
 
     // Wait for video to be ready
     await new Promise<void>((resolve) => {
       const v = videoRef.current;
-      if (!v || v.readyState >= 2) {
+      if (!v) {
+        resolve();
+        return;
+      }
+      if (v.readyState >= 2) {
         resolve();
         return;
       }
       v.onloadeddata = () => resolve();
     });
 
-    // Initialize FaceMesh (loads WASM + model from CDN)
+    // Initialize Face Landmarker
     try {
-      await initFaceMesh();
+      await initFaceLandmarker();
     } catch {
       setError("init_failed");
       return;
     }
 
     setIsDetecting(true);
-    isRunningRef.current = true;
 
-    const runDetection = async () => {
-      if (!videoRef.current || isCompleteRef.current || !isRunningRef.current)
-        return;
+    const runDetection = () => {
+      if (!videoRef.current || isCompleteRef.current) return;
       if (videoRef.current.readyState < 2) return;
 
-      const landmarks = await sendVideoFrame(videoRef.current);
+      const timestamp = performance.now();
+      const result = detectForVideo(videoRef.current, timestamp);
+      if (!result) return;
 
-      if (!isRunningRef.current || isCompleteRef.current) return;
+      const faces = result.faceLandmarks ?? [];
+      const count = faces.length;
+      setFaceCount(count);
 
-      if (!landmarks || landmarks.length === 0) {
-        setFaceCount(0);
+      if (count === 0) {
         setError("no_face");
         taskValidSinceRef.current = null;
         setStabilityProgress(0);
         return;
       }
+      if (count > 1) {
+        setError("multiple_faces");
+        taskValidSinceRef.current = null;
+        setStabilityProgress(0);
+        return;
+      }
 
-      setFaceCount(1);
+      setError(null);
+      const rawLandmarks = faces[0] as Landmark[];
 
-      // Face size check
-      const faceSize = calculateFaceSize(landmarks);
+      // Reject low-quality frames
+      if (rawLandmarks.length < MIN_LANDMARK_COUNT) {
+        return;
+      }
+
+      // Face size check — normalized (inter-ocular fraction)
+      const faceSize = calculateFaceSize(rawLandmarks);
       if (faceSize < MIN_FACE_SIZE) {
         setError("face_too_far");
         taskValidSinceRef.current = null;
@@ -332,43 +349,65 @@ export function useFaceDetection(
 
       // Face pixel width check
       const videoWidth = videoRef.current?.videoWidth ?? 0;
-      if (videoWidth > 0) {
-        const faceWidthPx = calculateFaceWidthPx(landmarks, videoWidth);
-        if (faceWidthPx < MIN_FACE_WIDTH_PX) {
-          setError("face_too_far");
-          taskValidSinceRef.current = null;
-          setStabilityProgress(0);
-          return;
-        }
+      const faceWidthPx = calculateFaceWidthPx(rawLandmarks, videoWidth);
+      if (videoWidth > 0 && faceWidthPx < MIN_FACE_WIDTH_PX) {
+        setError("face_too_far");
+        taskValidSinceRef.current = null;
+        setStabilityProgress(0);
+        return;
       }
 
-      setError(null);
-
-      // Add to landmark history for smoothing
+      // Add to landmark history buffer for smoothing
       const history = landmarkHistoryRef.current;
-      history.push(landmarks);
-      if (history.length > LANDMARK_HISTORY_SIZE) history.shift();
+      history.push(rawLandmarks);
+      if (history.length > LANDMARK_HISTORY_SIZE) {
+        history.shift();
+      }
 
-      const smoothed =
-        history.length >= 2 ? averageLandmarks(history) : landmarks;
+      // Use averaged landmarks for all calculations
+      const smoothedLandmarks =
+        history.length >= 2 ? averageLandmarks(history) : rawLandmarks;
 
-      // Capture baseline on first valid frame
+      // Capture baseline measurements on first valid frame
       if (!baselineCapturedRef.current) {
-        baselineMouthWidthRef.current = calculateMouthWidth(smoothed);
-        baselineMouthHeightRef.current = calculateMouthHeight(smoothed);
-        baselineEyebrowDistRef.current = calculateEyebrowEyeDistance(smoothed);
+        baselineMouthWidthRef.current = calculateMouthWidth(smoothedLandmarks);
+        baselineMouthHeightRef.current =
+          calculateMouthHeight(smoothedLandmarks);
+        baselineEyebrowDistRef.current =
+          calculateEyebrowEyeDistance(smoothedLandmarks);
         baselineCapturedRef.current = true;
       }
 
-      checkCurrentTask(smoothed);
+      // Draw landmarks on canvas (mirrored display)
+      if (canvasRef.current && videoRef.current) {
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          canvas.width = videoRef.current.videoWidth;
+          canvas.height = videoRef.current.videoHeight;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "rgba(124, 58, 237, 0.5)";
+          for (const lm of smoothedLandmarks) {
+            ctx.beginPath();
+            ctx.arc(
+              lm.x * canvas.width,
+              lm.y * canvas.height,
+              1.5,
+              0,
+              Math.PI * 2,
+            );
+            ctx.fill();
+          }
+        }
+      }
+
+      checkCurrentTask(smoothedLandmarks, count);
     };
 
-    // Use setInterval — prevents overlapping detection calls
-    detectionIntervalRef.current = setInterval(() => {
-      // Wrap in a guard to prevent multiple simultaneous detections
-      if (!isRunningRef.current) return;
-      runDetection();
-    }, DETECTION_INTERVAL_MS);
+    detectionIntervalRef.current = setInterval(
+      runDetection,
+      DETECTION_INTERVAL_MS,
+    );
   }, [checkCurrentTask]);
 
   useEffect(() => {
@@ -376,6 +415,9 @@ export function useFaceDetection(
       stopDetection();
     };
   }, [stopDetection]);
+
+  // calculateAvgEAR is used by useSelfieVerification — suppress linter for now
+  void calculateAvgEAR;
 
   return {
     videoRef,
@@ -385,7 +427,7 @@ export function useFaceDetection(
     isDetecting,
     isComplete,
     error,
-    selfieCapturing: false, // no selfie step in live mode anymore
+    selfieCapturing,
     startDetection,
     stopDetection,
     faceCount,

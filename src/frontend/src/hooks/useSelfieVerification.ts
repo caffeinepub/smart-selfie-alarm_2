@@ -3,23 +3,16 @@ import {
   type Landmark,
   averageLandmarks,
   calculateAvgEAR,
-  calculateFaceSize,
   calculateFaceWidthPx,
-  closeFaceMesh,
-  initFaceMesh,
-  isFaceCentered,
-  sendVideoFrame,
-} from "../lib/faceMesh";
+  closeFaceLandmarker,
+  detectForVideo,
+  initFaceLandmarker,
+} from "../lib/faceDetection";
 
 const EAR_EYES_OPEN_THRESHOLD = 0.22;
-const EAR_SELFIE_CHECK_THRESHOLD = 0.2;
 const MIN_FACE_WIDTH_PX = 120;
-const MIN_FACE_SIZE = 0.13;
-const DETECTION_INTERVAL_MS = 600;
+const DETECTION_INTERVAL_MS = 750;
 const LANDMARK_HISTORY_SIZE = 4;
-
-/** How long canTakeSelfie must hold before auto-capture (ms) */
-const AUTO_CAPTURE_STABLE_MS = 500;
 
 export type SelfieError =
   | "camera_denied"
@@ -28,7 +21,6 @@ export type SelfieError =
   | "multiple_faces"
   | "face_too_small"
   | "eyes_closed"
-  | "not_centered"
   | "selfie_failed"
   | null;
 
@@ -38,9 +30,7 @@ export interface UseSelfieVerificationReturn {
   isDetecting: boolean;
   faceDetected: boolean;
   eyesOpen: boolean;
-  faceCentered: boolean;
   canTakeSelfie: boolean;
-  verifiedMessage: string | null;
   error: SelfieError;
   captureState: "idle" | "capturing" | "success";
   startDetection: () => Promise<void>;
@@ -58,26 +48,20 @@ export function useSelfieVerification(
     null,
   );
   const isCompleteRef = useRef(false);
-  const isRunningRef = useRef(false);
   const landmarkHistoryRef = useRef<Landmark[][]>([]);
   const autoCaptureFiredRef = useRef(false);
-  const canTakeSelfieStableSinceRef = useRef<number | null>(null);
-
-  // Use a ref to hold the latest takeSelfie to avoid circular dep in startDetection
+  // Use a ref to hold latest takeSelfie to avoid circular dep in startDetection
   const takeSelfieRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   const [isDetecting, setIsDetecting] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
   const [eyesOpen, setEyesOpen] = useState(false);
-  const [faceCentered, setFaceCentered] = useState(false);
   const [error, setError] = useState<SelfieError>(null);
   const [captureState, setCaptureState] = useState<
     "idle" | "capturing" | "success"
   >("idle");
 
-  const canTakeSelfie =
-    faceDetected && eyesOpen && faceCentered && error === null;
-  const verifiedMessage = canTakeSelfie ? "Face verified. Take selfie." : null;
+  const canTakeSelfie = faceDetected && eyesOpen && error === null;
 
   const stopDetection = useCallback(() => {
     if (detectionIntervalRef.current) {
@@ -88,76 +72,60 @@ export function useSelfieVerification(
       for (const t of streamRef.current.getTracks()) t.stop();
       streamRef.current = null;
     }
-    isRunningRef.current = false;
-    closeFaceMesh();
+    closeFaceLandmarker();
     setIsDetecting(false);
   }, []);
 
   const takeSelfie = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current) return;
-    setCaptureState("capturing");
 
-    // Stop live detection during capture
+    // Mark complete and stop detection immediately — no post-capture loops
+    isCompleteRef.current = true;
     if (detectionIntervalRef.current) {
       clearInterval(detectionIntervalRef.current);
       detectionIntervalRef.current = null;
     }
-    isRunningRef.current = false;
 
-    // Wait a brief moment for the next video frame to settle
-    await new Promise((r) => setTimeout(r, 80));
-
-    // Run one final face check directly from video
-    const landmarks = await sendVideoFrame(videoRef.current);
-
-    if (!landmarks || landmarks.length === 0) {
-      setError("selfie_failed");
-      setCaptureState("idle");
-      // Re-enable detection after failure
-      isRunningRef.current = true;
-      return;
-    }
-
-    // Check EAR on the captured frame
-    const ear = calculateAvgEAR(landmarks);
-    if (ear < EAR_SELFIE_CHECK_THRESHOLD) {
-      setError("selfie_failed");
-      setCaptureState("idle");
-      isRunningRef.current = true;
-      return;
-    }
-
-    // Success!
-    isCompleteRef.current = true;
     setCaptureState("success");
-    stopDetection();
-    onComplete();
-  }, [onComplete, stopDetection]);
 
-  // Keep ref in sync
+    // Capture the frame to canvas (visual feedback only)
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (ctx) ctx.drawImage(video, 0, 0);
+
+    // Stop camera stream
+    if (streamRef.current) {
+      for (const t of streamRef.current.getTracks()) t.stop();
+      streamRef.current = null;
+    }
+
+    // Dismiss alarm immediately
+    onComplete();
+  }, [onComplete]);
+
+  // Keep ref in sync so runDetection can call it without stale closure
   takeSelfieRef.current = takeSelfie;
 
   const startDetection = useCallback(async () => {
     setError(null);
     isCompleteRef.current = false;
-    isRunningRef.current = false;
     autoCaptureFiredRef.current = false;
-    canTakeSelfieStableSinceRef.current = null;
     setFaceDetected(false);
     setEyesOpen(false);
-    setFaceCentered(false);
     landmarkHistoryRef.current = [];
     setCaptureState("idle");
 
-    // Acquire front camera — lightweight resolution for mobile
     let stream: MediaStream | null = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "user",
-            width: { ideal: 640 },
-            height: { ideal: 480 },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
           },
           audio: false,
         });
@@ -192,100 +160,72 @@ export function useSelfieVerification(
     });
 
     try {
-      await initFaceMesh();
+      await initFaceLandmarker();
     } catch {
       setError("init_failed");
       return;
     }
 
     setIsDetecting(true);
-    isRunningRef.current = true;
 
-    const runDetection = async () => {
-      if (!videoRef.current || isCompleteRef.current || !isRunningRef.current)
-        return;
+    const runDetection = () => {
+      if (!videoRef.current || isCompleteRef.current) return;
       if (videoRef.current.readyState < 2) return;
 
-      const landmarks = await sendVideoFrame(videoRef.current);
+      const timestamp = performance.now();
+      const result = detectForVideo(videoRef.current, timestamp);
+      if (!result) return;
 
-      if (!isRunningRef.current || isCompleteRef.current) return;
+      const faces = result.faceLandmarks ?? [];
+      const count = faces.length;
 
-      if (!landmarks || landmarks.length === 0) {
+      if (count === 0) {
         setFaceDetected(false);
         setEyesOpen(false);
-        setFaceCentered(false);
         setError("no_face");
-        canTakeSelfieStableSinceRef.current = null;
         return;
       }
-
-      // Face size checks
-      const videoWidth = videoRef.current?.videoWidth ?? 0;
-      if (videoWidth > 0) {
-        const faceWidthPx = calculateFaceWidthPx(landmarks, videoWidth);
-        if (faceWidthPx < MIN_FACE_WIDTH_PX) {
-          setFaceDetected(false);
-          setEyesOpen(false);
-          setFaceCentered(false);
-          setError("face_too_small");
-          canTakeSelfieStableSinceRef.current = null;
-          return;
-        }
-      }
-
-      const faceSize = calculateFaceSize(landmarks);
-      if (faceSize < MIN_FACE_SIZE) {
+      if (count > 1) {
         setFaceDetected(false);
         setEyesOpen(false);
-        setFaceCentered(false);
-        setError("face_too_small");
-        canTakeSelfieStableSinceRef.current = null;
+        setError("multiple_faces");
         return;
       }
 
-      // Add to history for smoothing
+      const rawLandmarks = faces[0] as Landmark[];
+
+      // Face size check
+      const videoWidth = videoRef.current?.videoWidth ?? 0;
+      const faceWidthPx = calculateFaceWidthPx(rawLandmarks, videoWidth);
+      if (videoWidth > 0 && faceWidthPx < MIN_FACE_WIDTH_PX) {
+        setFaceDetected(false);
+        setEyesOpen(false);
+        setError("face_too_small");
+        return;
+      }
+
+      // Add to history
       const history = landmarkHistoryRef.current;
-      history.push(landmarks);
+      history.push(rawLandmarks);
       if (history.length > LANDMARK_HISTORY_SIZE) history.shift();
+
       const smoothed =
-        history.length >= 2 ? averageLandmarks(history) : landmarks;
+        history.length >= 2 ? averageLandmarks(history) : rawLandmarks;
 
       const ear = calculateAvgEAR(smoothed);
       const isEyesOpen = ear > EAR_EYES_OPEN_THRESHOLD;
-      const isCentered = isFaceCentered(smoothed);
 
       setError(null);
       setFaceDetected(true);
       setEyesOpen(isEyesOpen);
-      setFaceCentered(isCentered);
 
-      const readyToCapture = isEyesOpen && isCentered;
-
-      if (readyToCapture) {
-        const now = Date.now();
-        if (canTakeSelfieStableSinceRef.current === null) {
-          canTakeSelfieStableSinceRef.current = now;
-        }
-        const heldFor = now - canTakeSelfieStableSinceRef.current;
-
-        // Auto-capture after stable for AUTO_CAPTURE_STABLE_MS
-        if (
-          heldFor >= AUTO_CAPTURE_STABLE_MS &&
-          !autoCaptureFiredRef.current &&
-          !isCompleteRef.current
-        ) {
-          autoCaptureFiredRef.current = true;
-          takeSelfieRef.current();
-        }
-      } else {
-        canTakeSelfieStableSinceRef.current = null;
-      }
+      // No auto-capture — user must press Take Selfie button when ready
     };
 
-    detectionIntervalRef.current = setInterval(() => {
-      if (!isRunningRef.current) return;
-      runDetection();
-    }, DETECTION_INTERVAL_MS);
+    detectionIntervalRef.current = setInterval(
+      runDetection,
+      DETECTION_INTERVAL_MS,
+    );
   }, []);
 
   useEffect(() => {
@@ -300,9 +240,7 @@ export function useSelfieVerification(
     isDetecting,
     faceDetected,
     eyesOpen,
-    faceCentered,
     canTakeSelfie,
-    verifiedMessage,
     error,
     captureState,
     startDetection,

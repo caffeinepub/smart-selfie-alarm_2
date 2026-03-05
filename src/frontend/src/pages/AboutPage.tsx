@@ -50,7 +50,7 @@ const techStack = [
 
 export default function AboutPage() {
   return (
-    <div className="min-h-full pb-24" style={{ backgroundColor: "#0a0a0f" }}>
+    <div className="min-h-full" style={{ backgroundColor: "#0a0a0f" }}>
       {/* Hero */}
       <div
         className="relative overflow-hidden px-6 pt-12 pb-10"

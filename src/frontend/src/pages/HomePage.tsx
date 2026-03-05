@@ -118,7 +118,7 @@ export default function HomePage() {
 
   return (
     <div
-      className="min-h-full pb-28"
+      className="min-h-full"
       style={{ backgroundColor: "#080810" }}
       data-ocid="home.page"
     >

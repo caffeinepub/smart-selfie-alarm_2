@@ -41,7 +41,7 @@ export default function ContactPage() {
   };
 
   return (
-    <div className="min-h-full pb-24" style={{ backgroundColor: "#0a0a0f" }}>
+    <div className="min-h-full" style={{ backgroundColor: "#0a0a0f" }}>
       {/* Header */}
       <div className="p-6 pt-8">
         <div className="flex items-center gap-2 mb-1">

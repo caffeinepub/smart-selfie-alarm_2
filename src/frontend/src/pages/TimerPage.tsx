@@ -116,7 +116,7 @@ export default function TimerPage() {
 
   return (
     <div
-      className="min-h-full flex flex-col pb-24"
+      className="min-h-full flex flex-col"
       style={{ backgroundColor: "#0a0a0f" }}
       data-ocid="timer.page"
     >

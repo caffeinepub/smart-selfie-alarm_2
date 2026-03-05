@@ -57,8 +57,11 @@ export default function AlarmTriggerPage() {
     }
   };
 
-  // Sound plays once on mount and stops on unmount. We use a ref to avoid
-  // re-triggering when activeAlarm changes (alarm data is stable at trigger time).
+  // Sound plays once on mount. We use a ref to avoid re-triggering when
+  // activeAlarm changes (alarm data is stable at trigger time).
+  // IMPORTANT: We do NOT stop the alarm on unmount here — the alarm must keep
+  // playing during verification. stopAlarmSound() is only called after
+  // verification succeeds (in VerificationPage).
   const soundIdRef = useRef(activeAlarm?.sound ?? "default");
   const soundUrlRef = useRef(activeAlarm?.soundUrl);
 
@@ -73,13 +76,8 @@ export default function AlarmTriggerPage() {
       playAlarmSound(soundId, volume, true);
     }
 
-    return () => {
-      stopAlarmSound();
-      if (audioElementRef.current) {
-        audioElementRef.current.pause();
-        audioElementRef.current = null;
-      }
-    };
+    // No cleanup here — sound must persist across navigation to /verify
+    return () => {};
   }, []);
 
   // If no active alarm, go back to dashboard

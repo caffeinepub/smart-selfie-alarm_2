@@ -184,7 +184,7 @@ export default function CreateEditAlarmPage() {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
-        className="p-4 pb-28 space-y-5"
+        className="p-4 space-y-5"
       >
         {/* Time picker */}
         <div className="glass-card p-5">

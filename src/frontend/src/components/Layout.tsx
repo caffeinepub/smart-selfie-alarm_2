@@ -46,7 +46,10 @@ export function Layout({ children }: LayoutProps) {
   }
 
   return (
-    <div className="flex h-screen" style={{ backgroundColor: "#0a0a0f" }}>
+    <div
+      className="flex h-screen overflow-hidden"
+      style={{ backgroundColor: "#0a0a0f" }}
+    >
       {/* Desktop sidebar */}
       <aside
         className="hidden md:flex flex-col w-60 flex-shrink-0 border-r"

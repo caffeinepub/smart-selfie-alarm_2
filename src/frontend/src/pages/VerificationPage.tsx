@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, Camera, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertTriangle, Camera, Loader2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { SuccessAnimation } from "../components/SuccessAnimation";
 import { TaskProgress } from "../components/TaskProgress";
@@ -26,36 +26,22 @@ function getCameraFacing(): "user" | "environment" {
   }
 }
 
-// Per-task hint messages shown below the task card
-const TASK_HINTS: Record<string, string> = {
-  raise_eyebrows: "Try raising your eyebrows",
-  smile: "Give a small natural smile",
-  turn_head: "Turn your head slightly right",
-  open_mouth: "Open your mouth wide",
-};
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Selfie Verification View
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface SelfieVerificationViewProps {
   onComplete: () => void;
-  onCancel: () => void;
 }
 
-function SelfieVerificationView({
-  onComplete,
-  onCancel,
-}: SelfieVerificationViewProps) {
+function SelfieVerificationView({ onComplete }: SelfieVerificationViewProps) {
   const {
     videoRef,
     canvasRef,
     isDetecting,
     faceDetected,
     eyesOpen,
-    faceCentered,
     canTakeSelfie,
-    verifiedMessage,
     error,
     captureState,
     startDetection,
@@ -76,39 +62,9 @@ function SelfieVerificationView({
     await startDetection();
   };
 
-  const handleCancel = () => {
-    stopDetection();
-    onCancel();
-  };
-
-  // Determine status indicator text and color
-  const statusText = (() => {
-    if (!isDetecting) return null;
-    if (captureState === "capturing") return null;
-    if (canTakeSelfie) return "Ready";
-    if (faceDetected && eyesOpen && !faceCentered) return "Center face";
-    if (faceDetected && !eyesOpen) return "Eyes closed";
-    if (faceDetected) return "Almost…";
-    return "Searching…";
-  })();
-
-  const statusColor = canTakeSelfie ? "#22d07a" : "#f59e0b";
-
-  // Determine instruction message below camera
-  const instructionText = (() => {
-    if (!isDetecting || captureState !== "idle") return null;
-    if (error === "no_face") return "Look at the camera";
-    if (error === "face_too_small") return "Move closer to the camera";
-    if (faceDetected && !faceCentered) return "Center your face in the frame";
-    if (faceDetected && !eyesOpen) return "Eyes closed — open your eyes";
-    if (canTakeSelfie && verifiedMessage) return null; // show verified message separately
-    if (faceDetected) return "Almost there — eyes open & centered";
-    return "Position your face with eyes open";
-  })();
-
   return (
     <div
-      className="fixed inset-0 flex flex-col"
+      className="fixed inset-0 flex flex-col overflow-hidden"
       style={{ backgroundColor: "#050508" }}
       data-ocid="selfie.page"
     >
@@ -145,26 +101,10 @@ function SelfieVerificationView({
 
       {/* ── UI Overlay ── */}
       <div className="absolute inset-0 flex flex-col pointer-events-none">
-        {/* Top bar */}
-        <div className="flex items-center justify-between px-4 pt-12 pb-4 pointer-events-auto">
-          <button
-            type="button"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-semibold transition-all active:scale-95"
-            style={{
-              background: "rgba(5,5,8,0.65)",
-              backdropFilter: "blur(12px)",
-              WebkitBackdropFilter: "blur(12px)",
-              color: "#94a3b8",
-              border: "1px solid rgba(255,255,255,0.1)",
-            }}
-            onClick={handleCancel}
-            data-ocid="selfie.cancel_button"
-          >
-            Cancel
-          </button>
-
-          {/* Status pill */}
-          {isDetecting && statusText && (
+        {/* Top bar — no cancel button */}
+        <div className="flex items-center justify-end px-4 pt-12 pb-4 pointer-events-auto">
+          {/* Status pill — top right */}
+          {isDetecting && (
             <div
               className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-medium"
               style={{
@@ -172,18 +112,22 @@ function SelfieVerificationView({
                 backdropFilter: "blur(12px)",
                 WebkitBackdropFilter: "blur(12px)",
                 border: "1px solid rgba(255,255,255,0.08)",
-                color: statusColor,
+                color: faceDetected && eyesOpen ? "#22d07a" : "#f59e0b",
               }}
               data-ocid="selfie.face_indicator"
             >
               <div
                 className="w-1.5 h-1.5 rounded-full"
                 style={{
-                  background: statusColor,
-                  boxShadow: `0 0 6px ${statusColor}`,
+                  background: faceDetected && eyesOpen ? "#22d07a" : "#f59e0b",
+                  boxShadow: `0 0 6px ${faceDetected && eyesOpen ? "#22d07a" : "#f59e0b"}`,
                 }}
               />
-              {statusText}
+              {faceDetected && eyesOpen
+                ? "Ready to take selfie"
+                : faceDetected
+                  ? "Open your eyes"
+                  : "Look at the camera"}
             </div>
           )}
 
@@ -208,7 +152,7 @@ function SelfieVerificationView({
           )}
         </div>
 
-        {/* Page subtitle */}
+        {/* Selfie Verification label */}
         {isDetecting && (
           <div className="px-6 pointer-events-none">
             <p
@@ -222,9 +166,9 @@ function SelfieVerificationView({
 
         {/* Bottom panel */}
         <div
-          className="pointer-events-auto px-5 mt-auto space-y-3"
+          className="pointer-events-auto px-5 pb-10 mt-auto space-y-3"
           style={{
-            paddingBottom: "max(env(safe-area-inset-bottom, 0px), 32px)",
+            paddingBottom: "env(safe-area-inset-bottom, 32px)",
           }}
         >
           {/* Camera denied */}
@@ -286,8 +230,7 @@ function SelfieVerificationView({
                 }}
               >
                 <p className="text-sm font-medium" style={{ color: "#94a3b8" }}>
-                  Look at the camera with eyes open and face centered — the
-                  selfie captures automatically
+                  Face the camera with your eyes open, then press Take Selfie
                 </p>
               </div>
               <Button
@@ -342,55 +285,33 @@ function SelfieVerificationView({
             </motion.div>
           )}
 
-          {/* Main selfie UI */}
+          {/* Take Selfie button — enabled when face detected + eyes open */}
           {isDetecting && captureState === "idle" && (
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.25 }}
-              className="space-y-2.5"
+              className="space-y-2"
             >
-              {/* "Face verified" message — shown when all conditions met */}
+              {/* Instruction */}
               <AnimatePresence mode="wait">
-                {canTakeSelfie && verifiedMessage ? (
-                  <motion.div
-                    key="verified"
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl"
-                    style={{
-                      background: "rgba(34,208,122,0.12)",
-                      border: "1px solid rgba(34,208,122,0.3)",
-                    }}
-                    data-ocid="selfie.success_state"
-                  >
-                    <CheckCircle2
-                      className="w-4 h-4 flex-shrink-0"
-                      style={{ color: "#22d07a" }}
-                    />
-                    <p
-                      className="text-sm font-semibold"
-                      style={{ color: "#22d07a" }}
-                    >
-                      {verifiedMessage}
-                    </p>
-                  </motion.div>
-                ) : instructionText ? (
-                  <motion.p
-                    key="instruction"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="text-xs text-center font-medium"
-                    style={{ color: "#64748b" }}
-                  >
-                    {instructionText}
-                  </motion.p>
-                ) : null}
+                <motion.p
+                  key={canTakeSelfie ? "ready" : "wait"}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="text-xs text-center font-medium"
+                  style={{ color: canTakeSelfie ? "#22d07a" : "#64748b" }}
+                >
+                  {error === "no_face"
+                    ? "Look at the camera"
+                    : canTakeSelfie
+                      ? "✓ Face and eyes detected — press Take Selfie"
+                      : "Position your face with eyes open"}
+                </motion.p>
               </AnimatePresence>
 
-              {/* Manual shutter button — fallback for auto-capture */}
+              {/* Take Selfie button */}
               <motion.button
                 type="button"
                 className="w-full rounded-[22px] font-bold text-sm flex items-center justify-center gap-2.5 transition-all"
@@ -411,7 +332,7 @@ function SelfieVerificationView({
                 disabled={!canTakeSelfie}
                 onClick={takeSelfie}
                 whileTap={canTakeSelfie ? { scale: 0.97 } : undefined}
-                data-ocid="selfie.primary_button"
+                data-ocid="selfie.take_selfie_button"
               >
                 <div
                   className="w-6 h-6 rounded-full border-2 flex items-center justify-center"
@@ -444,18 +365,11 @@ function SelfieVerificationView({
 
 interface LiveVerificationViewProps {
   onComplete: () => void;
-  onCancel: () => void;
 }
 
-function LiveVerificationView({
-  onComplete,
-  onCancel,
-}: LiveVerificationViewProps) {
+function LiveVerificationView({ onComplete }: LiveVerificationViewProps) {
   const [showSuccess, setShowSuccess] = useState(false);
   const [started, setStarted] = useState(false);
-  const [lastCompletedTask, setLastCompletedTask] = useState<string | null>(
-    null,
-  );
 
   const handleComplete = async () => {
     setShowSuccess(true);
@@ -498,19 +412,6 @@ function LiveVerificationView({
     stopDetection,
   } = useFaceDetection(handleComplete, cameraFacing);
 
-  // Track task completion for "Done!" feedback
-  const prevTaskIndexRef = useRef(0);
-  useEffect(() => {
-    if (taskIndex > prevTaskIndexRef.current && taskIndex > 0 && isDetecting) {
-      const completedTask = TASK_LIST[taskIndex - 1];
-      if (completedTask) {
-        setLastCompletedTask(TASK_LABELS[completedTask]);
-        setTimeout(() => setLastCompletedTask(null), 1500);
-      }
-    }
-    prevTaskIndexRef.current = taskIndex;
-  }, [taskIndex, isDetecting]);
-
   useEffect(() => {
     return () => {
       stopDetection();
@@ -520,11 +421,6 @@ function LiveVerificationView({
   const handleStart = async () => {
     setStarted(true);
     await startDetection();
-  };
-
-  const handleCancel = () => {
-    stopDetection();
-    onCancel();
   };
 
   const taskLabel = TASK_LABELS[currentTask];
@@ -537,17 +433,12 @@ function LiveVerificationView({
     if (error === "no_face" || faceCount === 0) return "Look at the camera";
     if (error === "multiple_faces") return "Only one face allowed";
     if (error === "face_too_far") return "Move closer to the camera";
-    if (isDetecting && currentTask) return TASK_HINTS[currentTask] ?? null;
     return null;
   })();
 
-  // Next task label for "Done!" feedback
-  const nextTaskLabel =
-    taskIndex < TASK_LIST.length ? TASK_LABELS[TASK_LIST[taskIndex]] : null;
-
   return (
     <div
-      className="fixed inset-0 flex flex-col"
+      className="fixed inset-0 flex flex-col overflow-hidden"
       style={{ backgroundColor: "#050508" }}
       data-ocid="verify.page"
     >
@@ -577,96 +468,12 @@ function LiveVerificationView({
               "linear-gradient(to bottom, rgba(5,5,8,0.75) 0%, rgba(5,5,8,0.0) 28%, rgba(5,5,8,0.0) 55%, rgba(5,5,8,0.92) 100%)",
           }}
         />
-
-        {/* TOP floating instruction card — shown when detecting */}
-        <AnimatePresence>
-          {isDetecting && !selfieCapturing && completedTasks < totalTasks && (
-            <motion.div
-              key={`top-${currentTask}`}
-              initial={{ opacity: 0, y: -16 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-              className="absolute top-20 left-0 right-0 px-5 pointer-events-none"
-            >
-              <div
-                className="rounded-2xl px-4 py-3 text-center mx-auto max-w-xs"
-                style={{
-                  background: "rgba(5,5,8,0.72)",
-                  border: "1px solid rgba(139,92,246,0.3)",
-                  backdropFilter: "blur(16px)",
-                  WebkitBackdropFilter: "blur(16px)",
-                }}
-              >
-                <span className="text-2xl mr-2">{taskIcon}</span>
-                <span className="text-sm font-bold text-white">
-                  {taskLabel}
-                </span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* "Done!" feedback overlay */}
-        <AnimatePresence>
-          {lastCompletedTask && (
-            <motion.div
-              key="done-feedback"
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              transition={{ duration: 0.2 }}
-              className="absolute inset-0 flex items-center justify-center pointer-events-none"
-            >
-              <div
-                className="flex flex-col items-center gap-2 px-6 py-4 rounded-3xl"
-                style={{
-                  background: "rgba(34,208,122,0.15)",
-                  border: "1px solid rgba(34,208,122,0.4)",
-                  backdropFilter: "blur(16px)",
-                }}
-              >
-                <CheckCircle2
-                  className="w-10 h-10"
-                  style={{ color: "#22d07a" }}
-                />
-                <p className="text-base font-bold" style={{ color: "#22d07a" }}>
-                  ✓ Done!
-                </p>
-                {nextTaskLabel && completedTasks < totalTasks && (
-                  <p
-                    className="text-xs text-center"
-                    style={{ color: "#94a3b8" }}
-                  >
-                    Now: {nextTaskLabel}
-                  </p>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </div>
 
       {/* ── UI Overlay ── */}
       <div className="absolute inset-0 flex flex-col pointer-events-none">
-        {/* Top bar */}
-        <div className="flex items-center justify-between px-4 pt-12 pb-3 pointer-events-auto">
-          <button
-            type="button"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-semibold transition-all active:scale-95"
-            style={{
-              background: "rgba(5,5,8,0.65)",
-              backdropFilter: "blur(12px)",
-              WebkitBackdropFilter: "blur(12px)",
-              color: "#94a3b8",
-              border: "1px solid rgba(255,255,255,0.1)",
-            }}
-            onClick={handleCancel}
-            data-ocid="verify.cancel_button"
-          >
-            Cancel
-          </button>
-
+        {/* Top bar — no cancel button */}
+        <div className="flex items-center justify-end px-4 pt-12 pb-3 pointer-events-auto">
           {/* Task progress dots */}
           {isDetecting && (
             <div
@@ -728,14 +535,10 @@ function LiveVerificationView({
           )}
         </div>
 
-        {/* Bottom panel — shrink-0 so it never squishes camera */}
+        {/* Bottom panel */}
         <div
-          className="pointer-events-auto px-5 mt-auto space-y-3 shrink-0"
-          style={{
-            paddingBottom: "max(env(safe-area-inset-bottom, 0px), 28px)",
-            maxHeight: "45vh",
-            overflowY: "auto",
-          }}
+          className="pointer-events-auto px-5 mt-auto space-y-3"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 32px)" }}
         >
           {/* Camera denied */}
           {error === "camera_denied" && (
@@ -852,7 +655,7 @@ function LiveVerificationView({
             </div>
           )}
 
-          {/* Selfie capturing overlay (unused in live mode, but keep for compat) */}
+          {/* Selfie capturing overlay (kept for compatibility) */}
           {selfieCapturing && (
             <motion.div
               initial={{ opacity: 0, y: 16 }}
@@ -865,12 +668,12 @@ function LiveVerificationView({
                 style={{ color: "#7c3aed" }}
               />
               <p className="text-sm font-semibold" style={{ color: "#a78bfa" }}>
-                Capturing verification selfie…
+                Completing verification…
               </p>
             </motion.div>
           )}
 
-          {/* Task instruction card — bottom */}
+          {/* Task instruction card */}
           {isDetecting && !selfieCapturing && (
             <motion.div
               key={currentTask}
@@ -916,6 +719,7 @@ function LiveVerificationView({
                     <p className="text-base font-bold text-white leading-tight">
                       {taskLabel}
                     </p>
+                    {/* Hint text */}
                     {hintText && (
                       <p
                         className="text-xs mt-0.5"
@@ -990,23 +794,26 @@ function LiveVerificationView({
 
 export default function VerificationPage() {
   const navigate = useNavigate();
-  const { activeAlarm, recordSuccess, dismissActiveAlarm } = useAlarms();
+  const { activeAlarm, recordSuccess } = useAlarms();
   const [showSuccess, setShowSuccess] = useState(false);
 
   const handleComplete = async () => {
-    stopAlarmSound(); // Stop alarm when verified
+    // Stop alarm immediately on verification success
+    stopAlarmSound();
     setShowSuccess(true);
     await recordSuccess();
     setTimeout(() => {
       navigate("/dashboard");
-    }, 2500);
+    }, 500);
   };
 
-  const handleCancel = () => {
-    stopAlarmSound(); // Stop alarm when cancelled
-    dismissActiveAlarm();
-    navigate("/dashboard");
-  };
+  // If no active alarm navigate back — but do NOT stop sound here,
+  // this handles the case where alarm was already dismissed (e.g. snooze)
+  useEffect(() => {
+    if (!activeAlarm) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [activeAlarm, navigate]);
 
   const isSelfieMode =
     activeAlarm?.verificationMode === VerificationMode.selfie;
@@ -1014,16 +821,16 @@ export default function VerificationPage() {
   if (isSelfieMode) {
     return (
       <>
-        <SelfieVerificationView
-          onComplete={handleComplete}
-          onCancel={handleCancel}
-        />
+        <SelfieVerificationView onComplete={handleComplete} />
         <SuccessAnimation show={showSuccess} />
       </>
     );
   }
 
   return (
-    <LiveVerificationView onComplete={handleComplete} onCancel={handleCancel} />
+    <>
+      <LiveVerificationView onComplete={handleComplete} />
+      <SuccessAnimation show={showSuccess} />
+    </>
   );
 }

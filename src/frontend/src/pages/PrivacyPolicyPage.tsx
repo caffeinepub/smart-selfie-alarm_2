@@ -46,7 +46,7 @@ export default function PrivacyPolicyPage() {
 
   return (
     <div
-      className="min-h-full pb-24"
+      className="min-h-full"
       style={{ backgroundColor: "#0a0a0f" }}
       data-ocid="privacy.page"
     >
