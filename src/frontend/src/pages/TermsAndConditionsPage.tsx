@@ -5,45 +5,45 @@ import { useNavigate } from "react-router-dom";
 
 const sections = [
   {
-    title: "Information We Collect",
+    title: "Service Description",
     content:
-      "We may collect basic information such as email address, account details, and usage data when you sign up or use the application. Camera access is used only for selfie verification to dismiss alarms.",
+      "Smart Selfie Alarm is a productivity mobile application designed to help users wake up using verification challenges such as selfie verification.",
   },
   {
-    title: "How We Use Information",
+    title: "User Responsibility",
     content:
-      "The collected information is used to operate the app, verify user identity for alarm challenges, and improve the service.",
+      "Users are responsible for maintaining the confidentiality of their account credentials and ensuring that the information provided during registration is accurate.",
   },
   {
-    title: "Data Security",
+    title: "Subscriptions",
     content:
-      "We use secure technologies and trusted services such as Firebase authentication to protect user data.",
+      "The application may offer subscription plans that renew automatically unless cancelled by the user.",
   },
   {
-    title: "Third-Party Services",
+    title: "Prohibited Use",
     content:
-      "Our app may use trusted third-party services such as Firebase and Razorpay for authentication and payment processing.",
+      "Users must not misuse the application, attempt to bypass verification systems, or interfere with the service functionality.",
   },
   {
-    title: "User Rights",
+    title: "Modification of Service",
     content:
-      "Users can request deletion of their account and personal data by contacting support.",
+      "We reserve the right to update or modify features of the application at any time to improve the service.",
   },
   {
     title: "Contact",
     content:
-      "For any privacy related concerns contact: support@smartselfiealarm.com",
+      "For any questions regarding these terms contact support@smartselfiealarm.com",
   },
 ];
 
-export default function PrivacyPolicyPage() {
+export default function TermsAndConditionsPage() {
   const navigate = useNavigate();
 
   return (
     <div
       className="min-h-full"
       style={{ backgroundColor: "#0a0a0f" }}
-      data-ocid="privacy.page"
+      data-ocid="terms.page"
     >
       {/* Header */}
       <div
@@ -63,7 +63,7 @@ export default function PrivacyPolicyPage() {
           <ArrowLeft className="w-5 h-5 text-white" />
         </Button>
         <div>
-          <h1 className="text-lg font-bold text-white">Privacy Policy</h1>
+          <h1 className="text-lg font-bold text-white">Terms & Conditions</h1>
           <p className="text-xs" style={{ color: "#64748b" }}>
             Last updated: January 2025
           </p>
@@ -79,22 +79,8 @@ export default function PrivacyPolicyPage() {
         {/* Intro */}
         <div className="glass-card p-5">
           <p className="text-sm leading-relaxed" style={{ color: "#cbd5e1" }}>
-            Smart Selfie Alarm respects your privacy and is committed to
-            protecting your personal information.
+            By using Smart Selfie Alarm you agree to the following terms.
           </p>
-          <div
-            className="mt-3 px-3 py-2 rounded-xl flex items-start gap-2"
-            style={{
-              background: "rgba(16,185,129,0.08)",
-              border: "1px solid rgba(16,185,129,0.2)",
-            }}
-          >
-            <span className="text-lg leading-none mt-0.5">🛡️</span>
-            <p className="text-xs font-medium" style={{ color: "#10b981" }}>
-              All face detection runs on-device. No biometric data is ever
-              stored or transmitted.
-            </p>
-          </div>
         </div>
 
         {/* Sections */}
@@ -125,7 +111,7 @@ export default function PrivacyPolicyPage() {
             Also Read
           </p>
           {[
-            { label: "Terms & Conditions", path: "/terms" },
+            { label: "Privacy Policy", path: "/privacy" },
             { label: "Refund Policy", path: "/refund" },
           ].map(({ label, path }) => (
             <button

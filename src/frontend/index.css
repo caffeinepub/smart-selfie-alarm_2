@@ -82,6 +82,11 @@
 
   html {
     color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  * {
+    -webkit-overflow-scrolling: touch;
   }
 
   body {
@@ -107,6 +112,11 @@
 }
 
 @layer components {
+  /* Safe area bottom padding */
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 80px);
+  }
+
   /* Glassmorphism card */
   .glass-card {
     background: rgba(255, 255, 255, 0.04);

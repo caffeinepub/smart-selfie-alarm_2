@@ -1,11 +1,15 @@
 import { cn } from "@/lib/utils";
 import {
   AlarmClock,
+  BarChart2,
   Bell,
+  FileText,
   Home,
   Info,
   Mail,
+  ReceiptText,
   Settings,
+  Shield,
   StopCircle,
   Timer,
 } from "lucide-react";
@@ -24,13 +28,16 @@ const navItems = [
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/about", label: "About", icon: Info },
   { to: "/contact", label: "Contact", icon: Mail },
+  { to: "/privacy", label: "Privacy Policy", icon: Shield },
+  { to: "/terms", label: "Terms & Conditions", icon: FileText },
+  { to: "/refund", label: "Refund Policy", icon: ReceiptText },
 ];
 
 const bottomNavItems = [
   { to: "/home", label: "Home", icon: Home },
   { to: "/dashboard", label: "Alarms", icon: Bell },
   { to: "/timer", label: "Timer", icon: Timer },
-  { to: "/stopwatch", label: "Watch", icon: StopCircle },
+  { to: "/dashboard", label: "Stats", icon: BarChart2 },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 

@@ -1,5 +1,13 @@
 import { Button } from "@/components/ui/button";
-import { AlarmClock, Bell, Plus } from "lucide-react";
+import {
+  AlarmClock,
+  Bell,
+  Brain,
+  CalendarDays,
+  Eye,
+  Plus,
+  Smartphone,
+} from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -360,7 +368,7 @@ export default function HomePage() {
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.3 }}
-          className="grid grid-cols-2 gap-3"
+          className="grid grid-cols-2 gap-3 mb-8"
         >
           {[
             {
@@ -394,6 +402,194 @@ export default function HomePage() {
               >
                 {sub}
               </p>
+            </button>
+          ))}
+        </motion.div>
+
+        {/* ── Key Features ─────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.36 }}
+          className="mb-8"
+        >
+          <p
+            className="text-xs font-bold uppercase tracking-widest mb-4 px-1"
+            style={{ color: "#475569" }}
+          >
+            Key Features
+          </p>
+          <div className="space-y-2.5">
+            {[
+              {
+                icon: Eye,
+                label: "Selfie Verification Alarm",
+                desc: "Stop the alarm only after a verified selfie",
+                color: "#7c3aed",
+              },
+              {
+                icon: Brain,
+                label: "Live Face Detection",
+                desc: "Smart detection ensures you are truly awake",
+                color: "#6366f1",
+              },
+              {
+                icon: CalendarDays,
+                label: "Multiple Alarm Scheduling",
+                desc: "Set alarms for different days and routines",
+                color: "#f59e0b",
+              },
+              {
+                icon: Smartphone,
+                label: "Mobile Friendly Interface",
+                desc: "Smooth experience on smartphones",
+                color: "#10b981",
+              },
+            ].map(({ icon: Icon, label, desc, color }) => (
+              <div
+                key={label}
+                className="flex items-center gap-3 rounded-[16px] px-4 py-3"
+                style={{
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                }}
+              >
+                <div
+                  className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ background: `${color}22` }}
+                >
+                  <Icon className="w-4 h-4" style={{ color }} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-white">{label}</p>
+                  <p className="text-xs mt-0.5" style={{ color: "#64748b" }}>
+                    {desc}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* ── Subscription Plans ───────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.42 }}
+          className="mb-4"
+        >
+          <p
+            className="text-xs font-bold uppercase tracking-widest mb-4 px-1"
+            style={{ color: "#475569" }}
+          >
+            Subscription Plans
+          </p>
+          <div className="space-y-2.5">
+            {[
+              {
+                name: "7 Day Trial",
+                price: "₹1",
+                period: "one-time",
+                highlight: false,
+                badge: "",
+              },
+              {
+                name: "Monthly Plan",
+                price: "₹14",
+                period: "per month",
+                highlight: true,
+                badge: "",
+              },
+              {
+                name: "Half Yearly Plan",
+                price: "₹75",
+                period: "6 months",
+                highlight: false,
+                badge: "≈11% OFF",
+              },
+            ].map(({ name, price, period, highlight, badge }) => (
+              <div
+                key={name}
+                className="flex items-center justify-between rounded-[16px] px-4 py-3"
+                style={{
+                  background: highlight
+                    ? "linear-gradient(135deg, rgba(124,58,237,0.2), rgba(99,102,241,0.1))"
+                    : "rgba(255,255,255,0.03)",
+                  border: highlight
+                    ? "1px solid rgba(124,58,237,0.28)"
+                    : "1px solid rgba(255,255,255,0.06)",
+                }}
+              >
+                <div>
+                  <p
+                    className="text-sm font-semibold"
+                    style={{ color: highlight ? "#f1f5f9" : "#cbd5e1" }}
+                  >
+                    {name}
+                  </p>
+                  <p className="text-xs mt-0.5" style={{ color: "#64748b" }}>
+                    {period}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {badge && (
+                    <span
+                      className="px-2 py-0.5 rounded-full text-xs font-bold"
+                      style={{
+                        background: "rgba(16,185,129,0.15)",
+                        color: "#10b981",
+                        border: "1px solid rgba(16,185,129,0.2)",
+                      }}
+                    >
+                      {badge}
+                    </span>
+                  )}
+                  <p
+                    className="text-base font-bold"
+                    style={{ color: highlight ? "#a78bfa" : "#e2e8f0" }}
+                  >
+                    {price}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="w-full mt-3 py-3 rounded-[16px] text-sm font-semibold transition-all active:scale-[0.98]"
+            style={{
+              background:
+                "linear-gradient(135deg, rgba(124,58,237,0.25), rgba(99,102,241,0.15))",
+              border: "1px solid rgba(124,58,237,0.2)",
+              color: "#c4b5fd",
+            }}
+            onClick={() => navigate("/subscription")}
+            data-ocid="home.subscription_button"
+          >
+            View Plans
+          </button>
+        </motion.div>
+
+        {/* ── Legal footer links ───────────────────── */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.4, delay: 0.5 }}
+          className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 pt-2"
+        >
+          {[
+            { label: "Privacy Policy", to: "/privacy" },
+            { label: "Terms & Conditions", to: "/terms" },
+            { label: "Refund Policy", to: "/refund" },
+          ].map(({ label, to }) => (
+            <button
+              key={to}
+              type="button"
+              className="text-xs transition-colors hover:opacity-80"
+              style={{ color: "#475569" }}
+              onClick={() => navigate(to)}
+            >
+              {label}
             </button>
           ))}
         </motion.div>

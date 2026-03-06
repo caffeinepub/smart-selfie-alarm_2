@@ -87,8 +87,8 @@ export function FaceGuide({ state, progress = 0, label }: FaceGuideProps) {
   const colors = STATE_COLORS[state];
 
   // Oval dimensions
-  const W = 220;
-  const H = 270;
+  const W = 280;
+  const H = 340;
   const cx = W / 2;
   const cy = H / 2;
   const rx = cx - 4;

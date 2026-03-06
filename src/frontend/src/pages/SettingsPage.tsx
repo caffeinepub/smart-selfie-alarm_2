@@ -16,6 +16,7 @@ import {
   Camera,
   ChevronRight,
   Clock,
+  Crown,
   FileText,
   Info,
   Loader2,
@@ -456,6 +457,12 @@ export default function SettingsPage() {
           <div className="glass-card overflow-hidden">
             {[
               {
+                label: "Subscription",
+                icon: Crown,
+                path: "/subscription",
+                ocid: "settings.subscription_link",
+              },
+              {
                 label: "About",
                 icon: Info,
                 path: "/about",
@@ -472,6 +479,18 @@ export default function SettingsPage() {
                 icon: FileText,
                 path: "/privacy",
                 ocid: "settings.privacy_link",
+              },
+              {
+                label: "Terms & Conditions",
+                icon: FileText,
+                path: "/terms",
+                ocid: "settings.terms_link",
+              },
+              {
+                label: "Refund Policy",
+                icon: FileText,
+                path: "/refund",
+                ocid: "settings.refund_link",
               },
             ].map(({ label, icon: Icon, path, ocid }, i, arr) => (
               <button

@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Camera, Loader2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { SuccessAnimation } from "../components/SuccessAnimation";
 import { TaskProgress } from "../components/TaskProgress";
@@ -50,6 +50,19 @@ function SelfieVerificationView({ onComplete }: SelfieVerificationViewProps) {
   } = useSelfieVerification(onComplete);
 
   const [started, setStarted] = useState(false);
+  const [failedCount, setFailedCount] = useState(0);
+  const prevErrorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (error === "no_face") {
+      if (prevErrorRef.current !== "no_face") {
+        setFailedCount((c) => c + 1);
+      }
+    } else if (faceDetected && eyesOpen) {
+      setFailedCount(0);
+    }
+    prevErrorRef.current = error ?? null;
+  }, [error, faceDetected, eyesOpen]);
 
   useEffect(() => {
     return () => {
@@ -97,6 +110,70 @@ function SelfieVerificationView({ onComplete }: SelfieVerificationViewProps) {
               "linear-gradient(to bottom, rgba(5,5,8,0.75) 0%, rgba(5,5,8,0.0) 28%, rgba(5,5,8,0.0) 55%, rgba(5,5,8,0.9) 100%)",
           }}
         />
+
+        {/* Face guide oval — shown when detecting */}
+        {isDetecting && (
+          <div
+            className="absolute inset-0 flex items-center justify-center pointer-events-none"
+            style={{ zIndex: 5 }}
+          >
+            <div
+              style={{
+                position: "relative",
+                width: "65%",
+                maxWidth: "260px",
+                aspectRatio: "3/4",
+              }}
+            >
+              <div
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  borderRadius: "50%",
+                  border: `2px solid ${faceDetected && eyesOpen ? "rgba(34,208,122,0.7)" : "rgba(139,92,246,0.55)"}`,
+                  boxShadow: "0 0 0 4000px rgba(5,5,8,0.45)",
+                  transition: "border-color 0.3s",
+                }}
+              />
+              <p
+                style={{
+                  position: "absolute",
+                  top: "-32px",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  whiteSpace: "nowrap",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color:
+                    faceDetected && eyesOpen
+                      ? "#22d07a"
+                      : "rgba(167,139,250,0.9)",
+                  textShadow: "0 1px 4px rgba(0,0,0,0.8)",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                {faceDetected && eyesOpen
+                  ? "✓ Ready"
+                  : "Put your face in the box"}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Tips banner — shown after repeated no_face failures */}
+        {isDetecting && failedCount >= 5 && error === "no_face" && (
+          <div
+            className="absolute top-16 left-4 right-4 px-4 py-2.5 rounded-2xl text-xs text-center z-10"
+            style={{
+              background: "rgba(5,5,8,0.82)",
+              border: "1px solid rgba(245,158,11,0.3)",
+              color: "#fbbf24",
+              backdropFilter: "blur(12px)",
+            }}
+          >
+            💡 Tip: Increase lighting or remove cap/sunglasses
+          </div>
+        )}
       </div>
 
       {/* ── UI Overlay ── */}

@@ -5,45 +5,39 @@ import { useNavigate } from "react-router-dom";
 
 const sections = [
   {
-    title: "Information We Collect",
+    title: "Trial Period",
     content:
-      "We may collect basic information such as email address, account details, and usage data when you sign up or use the application. Camera access is used only for selfie verification to dismiss alarms.",
+      "Users may receive a trial period before subscription charges apply.",
   },
   {
-    title: "How We Use Information",
+    title: "Cancellation",
     content:
-      "The collected information is used to operate the app, verify user identity for alarm challenges, and improve the service.",
+      "Users can cancel their subscription at any time from the account settings. Once cancelled, the subscription will remain active until the end of the billing cycle.",
   },
   {
-    title: "Data Security",
+    title: "Refunds",
     content:
-      "We use secure technologies and trusted services such as Firebase authentication to protect user data.",
+      "Payments once processed are generally non-refundable unless required by applicable laws.",
   },
   {
-    title: "Third-Party Services",
+    title: "Technical Issues",
     content:
-      "Our app may use trusted third-party services such as Firebase and Razorpay for authentication and payment processing.",
-  },
-  {
-    title: "User Rights",
-    content:
-      "Users can request deletion of their account and personal data by contacting support.",
+      "If a payment issue occurs due to a technical error, users may contact support for assistance.",
   },
   {
     title: "Contact",
-    content:
-      "For any privacy related concerns contact: support@smartselfiealarm.com",
+    content: "For refund related queries contact support@smartselfiealarm.com",
   },
 ];
 
-export default function PrivacyPolicyPage() {
+export default function RefundPolicyPage() {
   const navigate = useNavigate();
 
   return (
     <div
       className="min-h-full"
       style={{ backgroundColor: "#0a0a0f" }}
-      data-ocid="privacy.page"
+      data-ocid="refund.page"
     >
       {/* Header */}
       <div
@@ -63,7 +57,7 @@ export default function PrivacyPolicyPage() {
           <ArrowLeft className="w-5 h-5 text-white" />
         </Button>
         <div>
-          <h1 className="text-lg font-bold text-white">Privacy Policy</h1>
+          <h1 className="text-lg font-bold text-white">Refund Policy</h1>
           <p className="text-xs" style={{ color: "#64748b" }}>
             Last updated: January 2025
           </p>
@@ -79,22 +73,8 @@ export default function PrivacyPolicyPage() {
         {/* Intro */}
         <div className="glass-card p-5">
           <p className="text-sm leading-relaxed" style={{ color: "#cbd5e1" }}>
-            Smart Selfie Alarm respects your privacy and is committed to
-            protecting your personal information.
+            Smart Selfie Alarm offers subscription-based services.
           </p>
-          <div
-            className="mt-3 px-3 py-2 rounded-xl flex items-start gap-2"
-            style={{
-              background: "rgba(16,185,129,0.08)",
-              border: "1px solid rgba(16,185,129,0.2)",
-            }}
-          >
-            <span className="text-lg leading-none mt-0.5">🛡️</span>
-            <p className="text-xs font-medium" style={{ color: "#10b981" }}>
-              All face detection runs on-device. No biometric data is ever
-              stored or transmitted.
-            </p>
-          </div>
         </div>
 
         {/* Sections */}
@@ -125,8 +105,8 @@ export default function PrivacyPolicyPage() {
             Also Read
           </p>
           {[
+            { label: "Privacy Policy", path: "/privacy" },
             { label: "Terms & Conditions", path: "/terms" },
-            { label: "Refund Policy", path: "/refund" },
           ].map(({ label, path }) => (
             <button
               key={path}

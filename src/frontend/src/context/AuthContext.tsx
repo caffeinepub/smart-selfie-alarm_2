@@ -1,11 +1,11 @@
 import {
   type User,
   createUserWithEmailAndPassword,
-  getRedirectResult,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
-  signInWithRedirect,
   signOut,
   updateProfile,
 } from "firebase/auth";
@@ -26,6 +26,8 @@ interface AuthContextType {
   logout: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   updateDisplayName: (name: string) => Promise<void>;
+  resendVerificationEmail: () => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -35,11 +37,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Handle redirect result on page load (for mobile browsers that block popups)
-    getRedirectResult(auth).catch((err) => {
-      console.warn("Google redirect result error:", err);
-    });
-
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setLoading(false);
@@ -48,11 +45,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
+    const credential = await signInWithEmailAndPassword(auth, email, password);
+    if (!credential.user.emailVerified) {
+      await signOut(auth);
+      const err = new Error("auth/email-not-verified") as Error & {
+        code: string;
+      };
+      err.code = "auth/email-not-verified";
+      throw err;
+    }
   };
 
   const signup = async (email: string, password: string) => {
-    await createUserWithEmailAndPassword(auth, email, password);
+    const credential = await createUserWithEmailAndPassword(
+      auth,
+      email,
+      password,
+    );
+    await sendEmailVerification(credential.user);
+    await signOut(auth);
   };
 
   const logout = async () => {
@@ -60,20 +71,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithGoogle = async () => {
+    // Always use signInWithPopup — never signInWithRedirect.
+    // signInWithRedirect requires sessionStorage for its "initial state" handshake,
+    // which is blocked in Android WebView and Median.co wrapped apps, causing:
+    //   "Unable to process request due to missing initial state (sessionStorage inaccessible)"
+    //
+    // signInWithPopup opens a Chrome Custom Tab (on Android) or Safari sheet (on iOS),
+    // which has its own storage context and avoids the sessionStorage restriction entirely.
     try {
-      // Try popup first (works on desktop and most mobile browsers)
       await signInWithPopup(auth, googleProvider);
-    } catch (err: unknown) {
+    } catch (err) {
       const code = (err as { code?: string }).code ?? "";
-      // If popup was blocked, fall back to redirect flow
+      // Normalize codes that can appear in webview environments into a single
+      // user-friendly code that the UI already knows how to display.
       if (
         code === "auth/popup-blocked" ||
-        code === "auth/popup-closed-by-user"
+        code === "auth/operation-not-allowed" ||
+        code === "auth/web-storage-unsupported" ||
+        code === "auth/internal-error"
       ) {
-        await signInWithRedirect(auth, googleProvider);
+        const e = new Error("auth/webview-popup-blocked") as Error & {
+          code: string;
+        };
+        e.code = "auth/webview-popup-blocked";
+        throw e;
+      }
+      // Ignore benign user-cancel codes — treat them as a no-op.
+      if (
+        code === "auth/popup-closed-by-user" ||
+        code === "auth/cancelled-popup-request"
+      ) {
         return;
       }
-      // Re-throw other errors so the UI can handle them
       throw err;
     }
   };
@@ -81,8 +110,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updateDisplayName = async (name: string) => {
     if (!auth.currentUser) throw new Error("Not signed in");
     await updateProfile(auth.currentUser, { displayName: name });
-    // Force re-render by updating state
     setUser({ ...auth.currentUser });
+  };
+
+  const resendVerificationEmail = async () => {
+    if (!auth.currentUser) throw new Error("Not signed in");
+    await sendEmailVerification(auth.currentUser);
+  };
+
+  const sendPasswordReset = async (email: string) => {
+    await sendPasswordResetEmail(auth, email);
   };
 
   return (
@@ -95,6 +132,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         signInWithGoogle,
         updateDisplayName,
+        resendVerificationEmail,
+        sendPasswordReset,
       }}
     >
       {children}

@@ -33,7 +33,7 @@ importers:
         specifier: ~4.1.0
         version: 4.1.1(@dfinity/agent@3.3.1(@dfinity/candid@3.3.1(@dfinity/principal@3.3.1))(@dfinity/principal@3.3.1)(@noble/hashes@1.8.0))(@dfinity/candid@3.3.1(@dfinity/principal@3.3.1))(@dfinity/identity-secp256k1@3.3.1(@dfinity/candid@3.3.1(@dfinity/principal@3.3.1))(@dfinity/principal@3.3.1)(@noble/curves@1.9.7)(@noble/hashes@1.8.0))(@dfinity/identity@3.3.1(@dfinity/agent@3.3.1(@dfinity/candid@3.3.1(@dfinity/principal@3.3.1))(@dfinity/principal@3.3.1)(@noble/hashes@1.8.0))(@dfinity/candid@3.3.1(@dfinity/principal@3.3.1))(@dfinity/principal@3.3.1)(@noble/curves@1.9.7)(@noble/hashes@1.8.0))(@dfinity/principal@3.3.1)
       '@mediapipe/tasks-vision':
-        specifier: ^0.10.14
+        specifier: ^0.10.17
         version: 0.10.17
       '@radix-ui/react-accordion':
         specifier: ^1.1.2
@@ -144,7 +144,7 @@ importers:
         specifier: ^8.2.1
         version: 8.6.0(react@19.1.1)
       firebase:
-        specifier: ^10.14.0
+        specifier: ^10.14.1
         version: 10.14.1
       input-otp:
         specifier: ^1.4.1
@@ -180,7 +180,7 @@ importers:
         specifier: ^2.1.7
         version: 2.1.9(react-dom@19.1.1(react@19.1.1))(react@19.1.1)
       react-router-dom:
-        specifier: ^6.27.0
+        specifier: ^6.28.0
         version: 6.30.3(react-dom@19.1.1(react@19.1.1))(react@19.1.1)
       react-use:
         specifier: ~17.6.0

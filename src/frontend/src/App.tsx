@@ -23,8 +23,11 @@ import CreateEditAlarmPage from "./pages/CreateEditAlarmPage";
 import DashboardPage from "./pages/DashboardPage";
 import HomePage from "./pages/HomePage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
+import RefundPolicyPage from "./pages/RefundPolicyPage";
 import SettingsPage from "./pages/SettingsPage";
 import StopwatchPage from "./pages/StopwatchPage";
+import SubscriptionPage from "./pages/SubscriptionPage";
+import TermsAndConditionsPage from "./pages/TermsAndConditionsPage";
 import TimerPage from "./pages/TimerPage";
 import VerificationPage from "./pages/VerificationPage";
 
@@ -61,6 +64,9 @@ function AppRoutes() {
       "/timer": "Timer — Smart Selfie Alarm",
       "/stopwatch": "Stopwatch — Smart Selfie Alarm",
       "/privacy": "Privacy Policy — Smart Selfie Alarm",
+      "/terms": "Terms & Conditions — Smart Selfie Alarm",
+      "/refund": "Refund Policy — Smart Selfie Alarm",
+      "/subscription": "Subscription — Smart Selfie Alarm",
     };
     document.title = titles[location.pathname] ?? "Smart Selfie Alarm";
   }, [location.pathname]);
@@ -89,6 +95,8 @@ function AppRoutes() {
             <Route path="/about" element={<AboutPage />} />
             <Route path="/contact" element={<ContactPage />} />
             <Route path="/privacy" element={<PrivacyPolicyPage />} />
+            <Route path="/terms" element={<TermsAndConditionsPage />} />
+            <Route path="/refund" element={<RefundPolicyPage />} />
 
             {/* Protected routes */}
             <Route
@@ -160,6 +168,14 @@ function AppRoutes() {
               element={
                 <ProtectedRoute>
                   <StopwatchPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/subscription"
+              element={
+                <ProtectedRoute>
+                  <SubscriptionPage />
                 </ProtectedRoute>
               }
             />

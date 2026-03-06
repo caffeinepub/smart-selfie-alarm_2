@@ -1,5 +1,10 @@
 import { initializeApp } from "firebase/app";
-import { GoogleAuthProvider, getAuth } from "firebase/auth";
+import {
+  GoogleAuthProvider,
+  browserLocalPersistence,
+  getAuth,
+  setPersistence,
+} from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
@@ -15,10 +20,26 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+
+// Use localStorage (not sessionStorage) for persistence.
+// This avoids the "missing initial state" error in webviews where
+// sessionStorage is blocked or sandboxed.
+setPersistence(auth, browserLocalPersistence).catch(() => {
+  // Non-fatal: if persistence cannot be set, auth still works for the session.
+});
+
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.addScope("email");
 googleProvider.addScope("profile");
-googleProvider.setCustomParameters({ prompt: "select_account" });
+// Force account selection each time to prevent stale session issues.
+googleProvider.setCustomParameters({
+  prompt: "select_account",
+  // Disable the FedCM / identity credential picker that triggers sessionStorage
+  // usage on some Chrome versions — falls back to the standard OAuth popup.
+  include_granted_scopes: "true",
+});
+
 export default app;

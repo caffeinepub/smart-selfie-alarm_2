@@ -7,6 +7,7 @@ interface ConfettiPiece {
   duration: number;
   delay: number;
   size: number;
+  shape: "circle" | "rect";
 }
 
 const CONFETTI_COLORS = [
@@ -16,6 +17,8 @@ const CONFETTI_COLORS = [
   "#10b981",
   "#f59e0b",
   "#ec4899",
+  "#22d3ee",
+  "#34d399",
 ];
 
 export function SuccessAnimation({ show }: { show: boolean }) {
@@ -23,14 +26,15 @@ export function SuccessAnimation({ show }: { show: boolean }) {
 
   useEffect(() => {
     if (show) {
-      const newPieces: ConfettiPiece[] = Array.from({ length: 60 }, (_, i) => ({
+      const newPieces: ConfettiPiece[] = Array.from({ length: 70 }, (_, i) => ({
         id: i,
         x: Math.random() * 100,
         color:
           CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
-        duration: 2 + Math.random() * 2,
-        delay: Math.random() * 1,
-        size: 6 + Math.random() * 8,
+        duration: 2 + Math.random() * 2.5,
+        delay: Math.random() * 0.8,
+        size: 5 + Math.random() * 9,
+        shape: Math.random() > 0.5 ? "circle" : "rect",
       }));
       setPieces(newPieces);
     } else {
@@ -44,6 +48,8 @@ export function SuccessAnimation({ show }: { show: boolean }) {
     <div
       className="fixed inset-0 pointer-events-none z-50 overflow-hidden"
       data-ocid="verify.success_state"
+      aria-live="polite"
+      aria-label="Verification success"
     >
       {/* Confetti */}
       {pieces.map((piece) => (
@@ -56,21 +62,29 @@ export function SuccessAnimation({ show }: { show: boolean }) {
             width: `${piece.size}px`,
             height: `${piece.size}px`,
             backgroundColor: piece.color,
-            borderRadius: Math.random() > 0.5 ? "50%" : "2px",
+            borderRadius: piece.shape === "circle" ? "50%" : "2px",
             animation: `confetti-fall ${piece.duration}s ease-in ${piece.delay}s forwards`,
             boxShadow: `0 0 6px ${piece.color}`,
           }}
         />
       ))}
 
+      {/* Background dim */}
+      <div
+        className="absolute inset-0"
+        style={{ background: "rgba(5,5,8,0.7)" }}
+      />
+
       {/* Success center overlay */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="success-pulse flex flex-col items-center gap-4 text-center">
+      <div className="absolute inset-0 flex items-center justify-center px-6">
+        <div className="success-pulse flex flex-col items-center gap-5 text-center">
+          {/* Green checkmark circle */}
           <div
             className="w-28 h-28 rounded-full flex items-center justify-center"
             style={{
               background: "linear-gradient(135deg, #10b981, #059669)",
-              boxShadow: "0 0 40px rgba(16, 185, 129, 0.6)",
+              boxShadow:
+                "0 0 50px rgba(16, 185, 129, 0.7), 0 0 0 12px rgba(16,185,129,0.15)",
             }}
           >
             <svg
@@ -89,19 +103,21 @@ export function SuccessAnimation({ show }: { show: boolean }) {
               />
             </svg>
           </div>
+
           <div>
             <p
-              className="text-3xl font-bold"
+              className="text-3xl font-bold mb-2"
               style={{
-                background: "linear-gradient(135deg, #10b981, #34d399)",
+                background: "linear-gradient(135deg, #ffffff 0%, #a7f3d0 100%)",
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
+                letterSpacing: "-0.02em",
               }}
             >
-              You&apos;re Awake!
+              🎉 Congratulations!
             </p>
-            <p className="mt-1 text-sm" style={{ color: "#94a3b8" }}>
-              Alarm dismissed successfully
+            <p className="text-base font-medium" style={{ color: "#94a3b8" }}>
+              Alarm dismissed successfully. Keep it up 👍
             </p>
           </div>
         </div>
