@@ -74,7 +74,10 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [displayName, setDisplayName] = useState(
-    user?.displayName ?? user?.email?.split("@")[0] ?? "",
+    (user?.user_metadata?.display_name as string | undefined) ??
+      (user?.user_metadata?.full_name as string | undefined) ??
+      user?.email?.split("@")[0] ??
+      "",
   );
   const [savingName, setSavingName] = useState(false);
 
@@ -84,7 +87,12 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    setDisplayName(user?.displayName ?? user?.email?.split("@")[0] ?? "");
+    setDisplayName(
+      (user?.user_metadata?.display_name as string | undefined) ??
+        (user?.user_metadata?.full_name as string | undefined) ??
+        user?.email?.split("@")[0] ??
+        "",
+    );
   }, [user]);
 
   const handleSave = async () => {
@@ -143,7 +151,10 @@ export default function SettingsPage() {
   };
 
   const currentDisplayName =
-    user?.displayName ?? user?.email?.split("@")[0] ?? "User";
+    (user?.user_metadata?.display_name as string | undefined) ??
+    (user?.user_metadata?.full_name as string | undefined) ??
+    user?.email?.split("@")[0] ??
+    "User";
 
   return (
     <div className="min-h-full" style={{ backgroundColor: "#0a0a0f" }}>

@@ -84,7 +84,7 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     try {
       setLoading(true);
-      const fetched = await fetchAlarmsForUser(user.uid);
+      const fetched = await fetchAlarmsForUser(user.id);
       setAlarms(fetched);
     } catch (err) {
       console.error("Failed to fetch alarms:", err);
@@ -161,7 +161,7 @@ export function AlarmProvider({ children }: { children: ReactNode }) {
   ) => {
     if (!user) throw new Error("You must be signed in to create an alarm");
     const newAlarm = await createAlarmInFirestore(
-      user.uid,
+      user.id,
       time,
       repeatDays,
       verificationMode,

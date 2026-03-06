@@ -111,7 +111,10 @@ export default function DashboardPage() {
 
   const nextAlarm = getNextAlarm(alarms);
   const displayName =
-    user?.displayName ?? user?.email?.split("@")[0] ?? "there";
+    (user?.user_metadata?.display_name as string | undefined) ??
+    (user?.user_metadata?.full_name as string | undefined) ??
+    user?.email?.split("@")[0] ??
+    "there";
   const successRate =
     stats && stats.totalAlarmsTriggered > 0
       ? Math.round((stats.totalSuccesses / stats.totalAlarmsTriggered) * 100)

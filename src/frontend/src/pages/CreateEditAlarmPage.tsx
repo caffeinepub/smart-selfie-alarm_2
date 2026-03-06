@@ -1,7 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { ArrowLeft, Brain, Camera, Clock, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
@@ -11,7 +10,7 @@ import { SoundSelector } from "../components/SoundSelector";
 import { Day, VerificationMode } from "../context/AlarmContext";
 import { useAuthContext } from "../context/AuthContext";
 import { useAlarms } from "../hooks/useAlarms";
-import { storage } from "../lib/firebase";
+import { supabase } from "../lib/supabase";
 
 const DAY_ORDER: Day[] = [
   Day.monday,
@@ -99,13 +98,15 @@ export default function CreateEditAlarmPage() {
   const handleSoundUpload = async (file: File): Promise<void> => {
     if (!user) throw new Error("You must be signed in to upload");
     const timestamp = Date.now();
-    const storageRef = ref(
-      storage,
-      `alarm-sounds/${user.uid}/${timestamp}-${file.name}`,
-    );
-    await uploadBytes(storageRef, file);
-    const downloadUrl = await getDownloadURL(storageRef);
-    setCustomSoundUrl(downloadUrl);
+    const filePath = `alarm-sounds/${user.id}/${timestamp}-${file.name}`;
+    const { error } = await supabase.storage
+      .from("alarm-sounds")
+      .upload(filePath, file, { upsert: true });
+    if (error) throw new Error(error.message);
+    const { data } = supabase.storage
+      .from("alarm-sounds")
+      .getPublicUrl(filePath);
+    setCustomSoundUrl(data.publicUrl);
   };
 
   const handleSave = async () => {

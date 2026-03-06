@@ -1,8 +1,17 @@
 import { Button } from "@/components/ui/button";
-import { Check, Crown, Sparkles, Star, Zap } from "lucide-react";
+import { Check, Crown, Loader2, Sparkles, Star, Zap } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuthContext } from "../context/AuthContext";
+import { useSubscriptionContext } from "../context/SubscriptionContext";
+import {
+  type PlanType,
+  activateSubscription,
+} from "../lib/subscriptionService";
+
+// Razorpay Key ID (public — safe to expose in frontend)
+const RAZORPAY_KEY_ID = "rzp_live_SNnU8ftzmAC4jA";
 
 const MONTHLY_12 = 29 * 12; // 348
 const HALF_YEARLY = 150;
@@ -13,9 +22,10 @@ const HALF_YEARLY_DISCOUNT = Math.round(
 const YEARLY_DISCOUNT = Math.round(((MONTHLY_12 - YEARLY) / MONTHLY_12) * 100); // ~20%
 
 interface Plan {
-  id: "trial" | "monthly" | "halfYearly" | "yearly";
+  id: PlanType;
   name: string;
   price: string;
+  amountPaise: number; // Razorpay uses paise
   period: string;
   subtext: string;
   badge?: string;
@@ -30,6 +40,7 @@ const PLANS: Plan[] = [
     id: "trial",
     name: "Free Trial",
     price: "₹1",
+    amountPaise: 100,
     period: "7 days",
     subtext: "Refundable verification hold",
     features: [
@@ -46,6 +57,7 @@ const PLANS: Plan[] = [
     id: "monthly",
     name: "Monthly",
     price: "₹29",
+    amountPaise: 2900,
     period: "/ month",
     subtext: "Cancel anytime",
     features: [
@@ -62,6 +74,7 @@ const PLANS: Plan[] = [
     id: "halfYearly",
     name: "6 Months",
     price: "₹150",
+    amountPaise: 15000,
     period: "/ 6 months",
     subtext: `Save ≈${HALF_YEARLY_DISCOUNT}% vs monthly`,
     badge: `≈${HALF_YEARLY_DISCOUNT}% OFF`,
@@ -79,6 +92,7 @@ const PLANS: Plan[] = [
     id: "yearly",
     name: "Yearly",
     price: "₹280",
+    amountPaise: 28000,
     period: "/ year",
     subtext: `Save ≈${YEARLY_DISCOUNT}% vs monthly`,
     badge: "Best Value",
@@ -94,11 +108,109 @@ const PLANS: Plan[] = [
   },
 ];
 
+// Declare Razorpay global (loaded via CDN script)
+interface RazorpayInstance {
+  open(): void;
+  on(event: string, handler: (data: unknown) => void): void;
+}
+
+interface RazorpayConstructor {
+  new (options: Record<string, unknown>): RazorpayInstance;
+}
+
+declare global {
+  interface Window {
+    Razorpay: RazorpayConstructor;
+  }
+}
+
+function loadRazorpayScript(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (window.Razorpay) return resolve(true);
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
 export default function SubscriptionPage() {
   const navigate = useNavigate();
-  const [selected, setSelected] = useState<Plan["id"]>("yearly");
+  const { user } = useAuthContext();
+  const { isActive, refetch } = useSubscriptionContext();
+  const [selected, setSelected] = useState<PlanType>("yearly");
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState("");
 
   const selectedPlan = PLANS.find((p) => p.id === selected)!;
+
+  const handlePay = async () => {
+    if (!user) return;
+    setPayError("");
+    setPaying(true);
+
+    const loaded = await loadRazorpayScript();
+    if (!loaded) {
+      setPayError(
+        "Failed to load payment gateway. Check your connection. / भुगतान गेटवे लोड नहीं हुआ।",
+      );
+      setPaying(false);
+      return;
+    }
+
+    const options = {
+      key: RAZORPAY_KEY_ID,
+      amount: selectedPlan.amountPaise,
+      currency: "INR",
+      name: "Smart Selfie Alarm",
+      description: `${selectedPlan.name} Subscription`,
+      prefill: {
+        email: user.email ?? "",
+      },
+      theme: {
+        color: "#7c3aed",
+      },
+      modal: {
+        ondismiss: () => {
+          setPaying(false);
+        },
+      },
+      handler: async (response: Record<string, string>) => {
+        try {
+          await activateSubscription(
+            user.id,
+            selected,
+            response.razorpay_payment_id ?? "",
+            selectedPlan.amountPaise / 100,
+          );
+          await refetch();
+          navigate("/home");
+        } catch (_err) {
+          setPayError(
+            "Payment recorded but activation failed. Please contact support.",
+          );
+        } finally {
+          setPaying(false);
+        }
+      },
+    } as Record<string, unknown>;
+
+    try {
+      const rzp = new window.Razorpay(options);
+      rzp.on("payment.failed", (data: unknown) => {
+        const resp = data as { error?: { description?: string } };
+        setPayError(
+          `Payment failed: ${resp.error?.description ?? "Unknown error"}. / भुगतान विफल।`,
+        );
+        setPaying(false);
+      });
+      rzp.open();
+    } catch (_err) {
+      setPayError("Could not open payment. Please try again.");
+      setPaying(false);
+    }
+  };
 
   return (
     <div
@@ -129,7 +241,7 @@ export default function SubscriptionPage() {
             className="text-2xl font-bold text-white mb-1"
             style={{ letterSpacing: "-0.03em" }}
           >
-            Upgrade Your Plan
+            Smart Selfie Alarm Premium
           </h1>
           <p className="text-sm" style={{ color: "#64748b" }}>
             Choose the plan that works for you
@@ -274,11 +386,20 @@ export default function SubscriptionPage() {
             border: "1px solid rgba(255,255,255,0.07)",
           }}
         >
-          <p className="text-xs text-center mb-4" style={{ color: "#475569" }}>
-            Razorpay payment integration coming soon.
-            <br />
-            Your plan selection has been noted.
-          </p>
+          {payError && (
+            <div
+              className="mb-3 flex items-start gap-2 px-3 py-2.5 rounded-xl text-xs"
+              style={{
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.2)",
+                color: "#fca5a5",
+              }}
+              data-ocid="subscription.error_state"
+            >
+              <span className="flex-shrink-0 mt-0.5">⚠</span>
+              {payError}
+            </div>
+          )}
 
           <Button
             className="w-full h-12 rounded-2xl font-bold text-white border-0"
@@ -287,17 +408,14 @@ export default function SubscriptionPage() {
               boxShadow: `0 4px 20px ${selectedPlan.accentColor}35`,
               fontSize: "15px",
             }}
-            onClick={() => {
-              // Razorpay integration placeholder
-              // When Razorpay keys are provided:
-              // 1. Call POST /api/payment/create-order with { planType, amount }
-              // 2. Open Razorpay checkout with the returned order_id
-              // 3. On success, call activateSubscription() with the payment details
-              alert("Payment integration coming soon. / भुगतान जल्द आएगा।");
-            }}
+            onClick={handlePay}
+            disabled={paying}
             data-ocid="subscription.subscribe_button"
           >
-            Get {selectedPlan.name} — {selectedPlan.price}
+            {paying ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+            {paying
+              ? "Opening payment…"
+              : `Get ${selectedPlan.name} — ${selectedPlan.price}`}
           </Button>
 
           <p className="text-xs text-center mt-3" style={{ color: "#334155" }}>
@@ -306,15 +424,37 @@ export default function SubscriptionPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          className="w-full text-sm py-3 min-h-[44px]"
-          style={{ color: "#475569" }}
-          onClick={() => navigate(-1)}
-          data-ocid="subscription.back_link"
-        >
-          ← Back
-        </button>
+        {/* Allow already-subscribed users to skip back */}
+        {isActive && (
+          <button
+            type="button"
+            className="w-full text-sm py-3 min-h-[44px]"
+            style={{ color: "#475569" }}
+            onClick={() => navigate("/home")}
+            data-ocid="subscription.back_link"
+          >
+            ← Back to App
+          </button>
+        )}
+
+        {/* Legal links */}
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 pb-4">
+          {[
+            { label: "Privacy Policy", to: "/privacy" },
+            { label: "Terms & Conditions", to: "/terms" },
+            { label: "Refund Policy", to: "/refund" },
+          ].map(({ label, to }) => (
+            <button
+              key={to}
+              type="button"
+              className="text-xs transition-colors hover:opacity-80"
+              style={{ color: "#475569" }}
+              onClick={() => navigate(to)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

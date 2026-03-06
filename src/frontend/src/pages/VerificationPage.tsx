@@ -120,8 +120,8 @@ function SelfieVerificationView({ onComplete }: SelfieVerificationViewProps) {
             <div
               style={{
                 position: "relative",
-                width: "65%",
-                maxWidth: "260px",
+                width: "75%",
+                maxWidth: "320px",
                 aspectRatio: "3/4",
               }}
             >

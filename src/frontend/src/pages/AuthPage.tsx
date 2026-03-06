@@ -14,7 +14,6 @@ import { useState } from "react";
 import { SiGoogle } from "react-icons/si";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { isInWebView } from "../lib/webview";
 
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
 
@@ -49,8 +48,8 @@ function getFirebaseErrorMessage(code: string): string {
       return "Please try again. / दोबारा कोशिश करें।";
     case "auth/network-request-failed":
       return "Check your internet connection. / इंटरनेट जांचें।";
-    case "auth/webview-popup-blocked":
-      return "Sign-in couldn't open. Please try on a browser. / ब्राउज़र में खोलें।";
+    case "auth/google-failed":
+      return "Google sign-in failed. Please try again. / Google साइन-इन विफल।";
     case "auth/operation-not-allowed":
       return "This sign-in method is not enabled. / यह साइन-इन तरीका उपलब्ध नहीं।";
     case "auth/internal-error":
@@ -125,10 +124,6 @@ export default function AuthPage() {
   };
 
   const handleGoogle = async () => {
-    if (isInWebView()) {
-      setScreen("webview_confirm");
-      return;
-    }
     await doGoogleSignIn();
   };
 

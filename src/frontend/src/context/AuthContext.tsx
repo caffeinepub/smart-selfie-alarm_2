@@ -1,14 +1,4 @@
-import {
-  type User,
-  createUserWithEmailAndPassword,
-  onAuthStateChanged,
-  sendEmailVerification,
-  sendPasswordResetEmail,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  signOut,
-  updateProfile,
-} from "firebase/auth";
+import type { Session, User } from "@supabase/supabase-js";
 import {
   type ReactNode,
   createContext,
@@ -16,10 +6,11 @@ import {
   useEffect,
   useState,
 } from "react";
-import { auth, googleProvider } from "../lib/firebase";
+import { supabase } from "../lib/supabase";
 
 interface AuthContextType {
   user: User | null;
+  session: Session | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
@@ -34,98 +25,118 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
+      setUser(s?.user ?? null);
       setLoading(false);
     });
-    return unsubscribe;
+
+    // Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+      setUser(s?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const login = async (email: string, password: string) => {
-    const credential = await signInWithEmailAndPassword(auth, email, password);
-    if (!credential.user.emailVerified) {
-      await signOut(auth);
-      const err = new Error("auth/email-not-verified") as Error & {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) {
+      const e = new Error(error.message) as Error & { code: string };
+      e.code = mapSupabaseErrorCode(error.message);
+      throw e;
+    }
+    // Check email confirmed
+    if (data.user && !data.user.email_confirmed_at) {
+      await supabase.auth.signOut();
+      const e = new Error("auth/email-not-verified") as Error & {
         code: string;
       };
-      err.code = "auth/email-not-verified";
-      throw err;
+      e.code = "auth/email-not-verified";
+      throw e;
     }
   };
 
   const signup = async (email: string, password: string) => {
-    const credential = await createUserWithEmailAndPassword(
-      auth,
+    const { error } = await supabase.auth.signUp({
       email,
       password,
-    );
-    await sendEmailVerification(credential.user);
-    await signOut(auth);
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
+    });
+    if (error) {
+      const e = new Error(error.message) as Error & { code: string };
+      e.code = mapSupabaseErrorCode(error.message);
+      throw e;
+    }
+    // Supabase sends verification email automatically; sign out pending users
+    await supabase.auth.signOut();
   };
 
   const logout = async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
   };
 
   const signInWithGoogle = async () => {
-    // Always use signInWithPopup — never signInWithRedirect.
-    // signInWithRedirect requires sessionStorage for its "initial state" handshake,
-    // which is blocked in Android WebView and Median.co wrapped apps, causing:
-    //   "Unable to process request due to missing initial state (sessionStorage inaccessible)"
-    //
-    // signInWithPopup opens a Chrome Custom Tab (on Android) or Safari sheet (on iOS),
-    // which has its own storage context and avoids the sessionStorage restriction entirely.
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err) {
-      const code = (err as { code?: string }).code ?? "";
-      // Normalize codes that can appear in webview environments into a single
-      // user-friendly code that the UI already knows how to display.
-      if (
-        code === "auth/popup-blocked" ||
-        code === "auth/operation-not-allowed" ||
-        code === "auth/web-storage-unsupported" ||
-        code === "auth/internal-error"
-      ) {
-        const e = new Error("auth/webview-popup-blocked") as Error & {
-          code: string;
-        };
-        e.code = "auth/webview-popup-blocked";
-        throw e;
-      }
-      // Ignore benign user-cancel codes — treat them as a no-op.
-      if (
-        code === "auth/popup-closed-by-user" ||
-        code === "auth/cancelled-popup-request"
-      ) {
-        return;
-      }
-      throw err;
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+        queryParams: { prompt: "select_account" },
+      },
+    });
+    if (error) {
+      const e = new Error(error.message) as Error & { code: string };
+      e.code = "auth/google-failed";
+      throw e;
     }
+    // signInWithOAuth triggers a redirect — no await needed beyond this point
   };
 
   const updateDisplayName = async (name: string) => {
-    if (!auth.currentUser) throw new Error("Not signed in");
-    await updateProfile(auth.currentUser, { displayName: name });
-    setUser({ ...auth.currentUser });
+    const { error } = await supabase.auth.updateUser({
+      data: { full_name: name, display_name: name },
+    });
+    if (error) throw new Error(error.message);
+    // Refresh user
+    const { data } = await supabase.auth.getUser();
+    setUser(data.user);
   };
 
   const resendVerificationEmail = async () => {
-    if (!auth.currentUser) throw new Error("Not signed in");
-    await sendEmailVerification(auth.currentUser);
+    if (!user?.email) throw new Error("Not signed in");
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: user.email,
+    });
+    if (error) throw new Error(error.message);
   };
 
   const sendPasswordReset = async (email: string) => {
-    await sendPasswordResetEmail(auth, email);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) throw new Error(error.message);
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
+        session,
         loading,
         login,
         signup,
@@ -139,6 +150,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
+}
+
+function mapSupabaseErrorCode(message: string): string {
+  const msg = message.toLowerCase();
+  if (
+    msg.includes("invalid login credentials") ||
+    msg.includes("invalid_credentials")
+  )
+    return "auth/invalid-credential";
+  if (
+    msg.includes("email not confirmed") ||
+    msg.includes("email_not_confirmed")
+  )
+    return "auth/email-not-verified";
+  if (
+    msg.includes("user already registered") ||
+    msg.includes("already been registered")
+  )
+    return "auth/email-already-in-use";
+  if (msg.includes("password should be at least")) return "auth/weak-password";
+  if (msg.includes("rate limit") || msg.includes("too many"))
+    return "auth/too-many-requests";
+  if (msg.includes("network") || msg.includes("fetch"))
+    return "auth/network-request-failed";
+  return "auth/unknown";
 }
 
 export function useAuthContext(): AuthContextType {

@@ -6,7 +6,7 @@ import { motion } from "motion/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-const CONTACT_EMAIL = "smartselfiealarm123@gmail.com";
+const CONTACT_EMAIL = "smartselfiealarm@gmail.com";
 
 export default function ContactPage() {
   const [name, setName] = useState("");

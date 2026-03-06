@@ -96,7 +96,10 @@ export default function HomePage() {
   const { alarms } = useAlarms();
 
   const displayName =
-    user?.displayName ?? user?.email?.split("@")[0] ?? "there";
+    (user?.user_metadata?.display_name as string | undefined) ??
+    (user?.user_metadata?.full_name as string | undefined) ??
+    user?.email?.split("@")[0] ??
+    "there";
   const nextAlarm = getNextAlarm(alarms);
 
   const [liveTime, setLiveTime] = useState(() =>
@@ -495,17 +498,24 @@ export default function HomePage() {
               },
               {
                 name: "Monthly Plan",
-                price: "₹14",
+                price: "₹29",
                 period: "per month",
                 highlight: true,
                 badge: "",
               },
               {
-                name: "Half Yearly Plan",
-                price: "₹75",
+                name: "6 Month Plan",
+                price: "₹150",
                 period: "6 months",
                 highlight: false,
-                badge: "≈11% OFF",
+                badge: "≈14% OFF",
+              },
+              {
+                name: "Yearly Plan",
+                price: "₹280",
+                period: "per year",
+                highlight: false,
+                badge: "Best Value",
               },
             ].map(({ name, price, period, highlight, badge }) => (
               <div

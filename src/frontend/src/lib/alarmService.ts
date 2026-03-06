@@ -1,18 +1,5 @@
-import {
-  type DocumentData,
-  type QueryDocumentSnapshot,
-  Timestamp,
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  query,
-  updateDoc,
-  where,
-} from "firebase/firestore";
 import type { Day, VerificationMode } from "../backend.d";
-import { db } from "./firebase";
+import { supabase } from "./supabase";
 
 export interface FirestoreAlarm {
   id: string;
@@ -26,35 +13,31 @@ export interface FirestoreAlarm {
   createdAt: Date;
 }
 
-function docToAlarm(
-  docSnap: QueryDocumentSnapshot<DocumentData>,
-): FirestoreAlarm {
-  const data = docSnap.data();
+function rowToAlarm(row: Record<string, unknown>): FirestoreAlarm {
   return {
-    id: docSnap.id,
-    userId: data.userId as string,
-    time: BigInt(data.time as number),
-    repeatDays: (data.repeatDays as string[]).map((d) => d as Day),
-    verificationMode: data.verificationMode as VerificationMode,
-    sound: data.sound as string,
-    ...(data.soundUrl ? { soundUrl: data.soundUrl as string } : {}),
-    enabled: data.enabled as boolean,
-    createdAt:
-      data.createdAt instanceof Timestamp
-        ? data.createdAt.toDate()
-        : new Date(data.createdAt as string),
+    id: String(row.id),
+    userId: String(row.user_id),
+    time: BigInt(Number(row.time)),
+    repeatDays: (row.repeat_days as string[]).map((d) => d as Day),
+    verificationMode: row.verification_mode as VerificationMode,
+    sound: String(row.sound),
+    ...(row.sound_url ? { soundUrl: String(row.sound_url) } : {}),
+    enabled: Boolean(row.enabled),
+    createdAt: new Date(String(row.created_at)),
   };
 }
 
 export async function fetchAlarmsForUser(
   userId: string,
 ): Promise<FirestoreAlarm[]> {
-  const q = query(collection(db, "alarms"), where("userId", "==", userId));
-  const snapshot = await getDocs(q);
-  const results = snapshot.docs.map(docToAlarm);
-  // Sort by time ascending
-  results.sort((a, b) => Number(a.time) - Number(b.time));
-  return results;
+  const { data, error } = await supabase
+    .from("alarms")
+    .select("*")
+    .eq("user_id", userId)
+    .order("time", { ascending: true });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(rowToAlarm);
 }
 
 export async function createAlarmInFirestore(
@@ -65,31 +48,29 @@ export async function createAlarmInFirestore(
   sound: string,
   soundUrl?: string,
 ): Promise<FirestoreAlarm> {
-  const docRef = await addDoc(collection(db, "alarms"), {
-    userId,
-    time: Number(time),
-    repeatDays: repeatDays as string[],
-    verificationMode: verificationMode as string,
-    sound,
-    ...(soundUrl ? { soundUrl } : {}),
-    enabled: true,
-    createdAt: new Date(),
-  });
-  return {
-    id: docRef.id,
-    userId,
-    time,
-    repeatDays,
-    verificationMode,
-    sound,
-    ...(soundUrl ? { soundUrl } : {}),
-    enabled: true,
-    createdAt: new Date(),
-  };
+  const { data, error } = await supabase
+    .from("alarms")
+    .insert([
+      {
+        user_id: userId,
+        time: Number(time),
+        repeat_days: repeatDays as string[],
+        verification_mode: verificationMode as string,
+        sound,
+        sound_url: soundUrl ?? null,
+        enabled: true,
+        created_at: new Date().toISOString(),
+      },
+    ])
+    .select()
+    .single();
+
+  if (error) throw new Error(error.message);
+  return rowToAlarm(data);
 }
 
 export async function updateAlarmInFirestore(
-  alarmDocId: string,
+  alarmId: string,
   time: bigint,
   repeatDays: Day[],
   verificationMode: VerificationMode,
@@ -97,28 +78,34 @@ export async function updateAlarmInFirestore(
   enabled: boolean,
   soundUrl?: string,
 ): Promise<void> {
-  const docRef = doc(db, "alarms", alarmDocId);
-  await updateDoc(docRef, {
-    time: Number(time),
-    repeatDays: repeatDays as string[],
-    verificationMode: verificationMode as string,
-    sound,
-    enabled,
-    ...(soundUrl ? { soundUrl } : {}),
-  });
+  const { error } = await supabase
+    .from("alarms")
+    .update({
+      time: Number(time),
+      repeat_days: repeatDays as string[],
+      verification_mode: verificationMode as string,
+      sound,
+      enabled,
+      sound_url: soundUrl ?? null,
+    })
+    .eq("id", alarmId);
+
+  if (error) throw new Error(error.message);
 }
 
-export async function deleteAlarmFromFirestore(
-  alarmDocId: string,
-): Promise<void> {
-  const docRef = doc(db, "alarms", alarmDocId);
-  await deleteDoc(docRef);
+export async function deleteAlarmFromFirestore(alarmId: string): Promise<void> {
+  const { error } = await supabase.from("alarms").delete().eq("id", alarmId);
+  if (error) throw new Error(error.message);
 }
 
 export async function toggleAlarmInFirestore(
-  alarmDocId: string,
+  alarmId: string,
   enabled: boolean,
 ): Promise<void> {
-  const docRef = doc(db, "alarms", alarmDocId);
-  await updateDoc(docRef, { enabled });
+  const { error } = await supabase
+    .from("alarms")
+    .update({ enabled })
+    .eq("id", alarmId);
+
+  if (error) throw new Error(error.message);
 }

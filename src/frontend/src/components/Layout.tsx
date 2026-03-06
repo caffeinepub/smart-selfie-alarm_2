@@ -1,17 +1,17 @@
 import { cn } from "@/lib/utils";
 import {
   AlarmClock,
-  BarChart2,
   Bell,
+  Calculator,
+  Crown,
   FileText,
-  Home,
   Info,
+  LayoutDashboard,
   Mail,
   ReceiptText,
   Settings,
   Shield,
-  StopCircle,
-  Timer,
+  Wrench,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
@@ -20,11 +20,11 @@ interface LayoutProps {
   children: ReactNode;
 }
 
-const navItems = [
-  { to: "/home", label: "Home", icon: Home },
+const sidebarNavItems = [
+  { to: "/home", label: "Dashboard", icon: LayoutDashboard },
   { to: "/dashboard", label: "Alarms", icon: Bell },
-  { to: "/timer", label: "Timer", icon: Timer },
-  { to: "/stopwatch", label: "Stopwatch", icon: StopCircle },
+  { to: "/tools", label: "Tools", icon: Calculator },
+  { to: "/subscription", label: "Subscription", icon: Crown },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/about", label: "About", icon: Info },
   { to: "/contact", label: "Contact", icon: Mail },
@@ -34,10 +34,10 @@ const navItems = [
 ];
 
 const bottomNavItems = [
-  { to: "/home", label: "Home", icon: Home },
+  { to: "/home", label: "Dashboard", icon: LayoutDashboard },
   { to: "/dashboard", label: "Alarms", icon: Bell },
-  { to: "/timer", label: "Timer", icon: Timer },
-  { to: "/dashboard", label: "Stats", icon: BarChart2 },
+  { to: "/tools", label: "Tools", icon: Wrench },
+  { to: "/subscription", label: "Premium", icon: Crown },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -90,8 +90,8 @@ export function Layout({ children }: LayoutProps) {
 
         <div className="px-3 flex-1 overflow-y-auto">
           <nav className="space-y-0.5">
-            {navItems.map(({ to, label, icon: Icon }) => (
-              <NavLink key={to} to={to}>
+            {sidebarNavItems.map(({ to, label, icon: Icon }) => (
+              <NavLink key={`${to}-${label}`} to={to}>
                 {({ isActive }) => (
                   <div
                     className={cn(
@@ -162,7 +162,7 @@ export function Layout({ children }: LayoutProps) {
         <div className="flex items-stretch h-16">
           {bottomNavItems.map(({ to, label, icon: Icon }) => (
             <NavLink
-              key={to}
+              key={`${to}-${label}`}
               to={to}
               className="flex-1"
               data-ocid={`nav.${label.toLowerCase().replace(/\s+/g, "_")}.link`}

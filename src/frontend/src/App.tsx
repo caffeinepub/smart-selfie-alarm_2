@@ -13,6 +13,8 @@ import { Layout } from "./components/Layout";
 import { LoadingSpinner } from "./components/LoadingSpinner";
 import { AlarmProvider } from "./context/AlarmContext";
 import { AuthProvider } from "./context/AuthContext";
+import { SubscriptionProvider } from "./context/SubscriptionContext";
+import { useSubscriptionContext } from "./context/SubscriptionContext";
 import { useAuth } from "./hooks/useAuth";
 
 import AboutPage from "./pages/AboutPage";
@@ -29,6 +31,7 @@ import StopwatchPage from "./pages/StopwatchPage";
 import SubscriptionPage from "./pages/SubscriptionPage";
 import TermsAndConditionsPage from "./pages/TermsAndConditionsPage";
 import TimerPage from "./pages/TimerPage";
+import ToolsPage from "./pages/ToolsPage";
 import VerificationPage from "./pages/VerificationPage";
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -40,6 +43,25 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 
   if (!user) {
     return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+/**
+ * SubscriptionGuard — wraps authenticated routes that require an active plan.
+ * If the subscription is still loading we show a spinner.
+ * If there is no active subscription the user is redirected to /subscription.
+ */
+function SubscriptionGuard({ children }: { children: ReactNode }) {
+  const { isActive, loading } = useSubscriptionContext();
+
+  if (loading) {
+    return <LoadingSpinner fullScreen />;
+  }
+
+  if (!isActive) {
+    return <Navigate to="/subscription" replace />;
   }
 
   return <>{children}</>;
@@ -63,6 +85,7 @@ function AppRoutes() {
       "/contact": "Contact — Smart Selfie Alarm",
       "/timer": "Timer — Smart Selfie Alarm",
       "/stopwatch": "Stopwatch — Smart Selfie Alarm",
+      "/tools": "Tools — Smart Selfie Alarm",
       "/privacy": "Privacy Policy — Smart Selfie Alarm",
       "/terms": "Terms & Conditions — Smart Selfie Alarm",
       "/refund": "Refund Policy — Smart Selfie Alarm",
@@ -98,12 +121,25 @@ function AppRoutes() {
             <Route path="/terms" element={<TermsAndConditionsPage />} />
             <Route path="/refund" element={<RefundPolicyPage />} />
 
-            {/* Protected routes */}
+            {/* Subscription page — requires login but NOT an active subscription
+                (user lands here to subscribe) */}
+            <Route
+              path="/subscription"
+              element={
+                <ProtectedRoute>
+                  <SubscriptionPage />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Protected + subscription-gated routes */}
             <Route
               path="/home"
               element={
                 <ProtectedRoute>
-                  <HomePage />
+                  <SubscriptionGuard>
+                    <HomePage />
+                  </SubscriptionGuard>
                 </ProtectedRoute>
               }
             />
@@ -111,7 +147,9 @@ function AppRoutes() {
               path="/dashboard"
               element={
                 <ProtectedRoute>
-                  <DashboardPage />
+                  <SubscriptionGuard>
+                    <DashboardPage />
+                  </SubscriptionGuard>
                 </ProtectedRoute>
               }
             />
@@ -119,7 +157,9 @@ function AppRoutes() {
               path="/alarm/new"
               element={
                 <ProtectedRoute>
-                  <CreateEditAlarmPage />
+                  <SubscriptionGuard>
+                    <CreateEditAlarmPage />
+                  </SubscriptionGuard>
                 </ProtectedRoute>
               }
             />
@@ -127,7 +167,9 @@ function AppRoutes() {
               path="/alarm/edit/:id"
               element={
                 <ProtectedRoute>
-                  <CreateEditAlarmPage />
+                  <SubscriptionGuard>
+                    <CreateEditAlarmPage />
+                  </SubscriptionGuard>
                 </ProtectedRoute>
               }
             />
@@ -135,7 +177,9 @@ function AppRoutes() {
               path="/alarm-trigger"
               element={
                 <ProtectedRoute>
-                  <AlarmTriggerPage />
+                  <SubscriptionGuard>
+                    <AlarmTriggerPage />
+                  </SubscriptionGuard>
                 </ProtectedRoute>
               }
             />
@@ -143,7 +187,9 @@ function AppRoutes() {
               path="/verify"
               element={
                 <ProtectedRoute>
-                  <VerificationPage />
+                  <SubscriptionGuard>
+                    <VerificationPage />
+                  </SubscriptionGuard>
                 </ProtectedRoute>
               }
             />
@@ -151,7 +197,9 @@ function AppRoutes() {
               path="/settings"
               element={
                 <ProtectedRoute>
-                  <SettingsPage />
+                  <SubscriptionGuard>
+                    <SettingsPage />
+                  </SubscriptionGuard>
                 </ProtectedRoute>
               }
             />
@@ -159,7 +207,9 @@ function AppRoutes() {
               path="/timer"
               element={
                 <ProtectedRoute>
-                  <TimerPage />
+                  <SubscriptionGuard>
+                    <TimerPage />
+                  </SubscriptionGuard>
                 </ProtectedRoute>
               }
             />
@@ -167,15 +217,19 @@ function AppRoutes() {
               path="/stopwatch"
               element={
                 <ProtectedRoute>
-                  <StopwatchPage />
+                  <SubscriptionGuard>
+                    <StopwatchPage />
+                  </SubscriptionGuard>
                 </ProtectedRoute>
               }
             />
             <Route
-              path="/subscription"
+              path="/tools"
               element={
                 <ProtectedRoute>
-                  <SubscriptionPage />
+                  <SubscriptionGuard>
+                    <ToolsPage />
+                  </SubscriptionGuard>
                 </ProtectedRoute>
               }
             />
@@ -193,24 +247,31 @@ function AppWithProviders() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AlarmProviderWrapper>
-          <AppRoutes />
-          <Toaster
-            position="top-center"
-            theme="dark"
-            toastOptions={{
-              style: {
-                background: "rgba(20, 20, 35, 0.95)",
-                border: "1px solid rgba(124,58,237,0.2)",
-                color: "#f8fafc",
-                backdropFilter: "blur(12px)",
-              },
-            }}
-          />
-        </AlarmProviderWrapper>
+        <SubscriptionProviderWrapper>
+          <AlarmProviderWrapper>
+            <AppRoutes />
+            <Toaster
+              position="top-center"
+              theme="dark"
+              toastOptions={{
+                style: {
+                  background: "rgba(20, 20, 35, 0.95)",
+                  border: "1px solid rgba(124,58,237,0.2)",
+                  color: "#f8fafc",
+                  backdropFilter: "blur(12px)",
+                },
+              }}
+            />
+          </AlarmProviderWrapper>
+        </SubscriptionProviderWrapper>
       </AuthProvider>
     </BrowserRouter>
   );
+}
+
+// SubscriptionProvider must be inside BrowserRouter and AuthProvider
+function SubscriptionProviderWrapper({ children }: { children: ReactNode }) {
+  return <SubscriptionProvider>{children}</SubscriptionProvider>;
 }
 
 // AlarmProvider needs to be inside BrowserRouter for useNavigate

@@ -1,47 +1,64 @@
 # Smart Selfie Alarm
 
 ## Current State
-The app is a full React + Firebase SPA with:
-- Auth (email/password + Google popup, email verification, forgot password)
-- Alarm CRUD stored in Firestore
-- Selfie + Live face verification via MediaPipe
-- Timer, Stopwatch, Home, Dashboard, Settings pages
-- Subscription page with 3 plans: Trial ₹1, Monthly ₹14, Half-Yearly ₹75
-- Legal pages: PrivacyPolicyPage, TermsAndConditionsPage, RefundPolicyPage, AboutPage, ContactPage — all with placeholder/older content
-- SettingsPage with links to all legal pages, Subscription, About, Contact
+- Full React + TypeScript frontend with Firebase (Auth, Firestore, Storage)
+- Firebase credentials hardcoded in `lib/firebase.ts`
+- Auth: Email/password + Google Sign-In (popup), email verification enforced
+- Alarm storage: Firestore `alarms` collection
+- Subscription storage: Firestore `users` collection (trial 7-day auto-created)
+- Razorpay: placeholder only — payment not wired
+- Navigation: Home, Alarms, Timer, Stopwatch, Settings (5-tab bottom nav)
+- Selfie verification: round/oval face guide overlay
+- Tools (Calculator, Calendar, World Clock): not present
 
 ## Requested Changes (Diff)
 
 ### Add
-- New subscription plans: Monthly ₹29/month, 6-Month ₹150, Yearly ₹280 (with "Best Value" badge); replace the old ₹14/₹75 plans
-- "Also Read" / legal cross-link section at the bottom of each legal page already exists; ensure all 3 legal pages cross-link each other
-- ContactPage: update email to smartselfiealarm@gmail.com (already correct) and support@smartselfiealarm.com reference in legal pages
+- Supabase client library (`@supabase/supabase-js`) replacing Firebase SDK
+- `lib/supabase.ts` with hardcoded Supabase URL + anon key (provided by user)
+- Razorpay live payment integration using `rzp_live_SNnU8ftzmAC4jA`
+  - Checkout popup loaded from CDN script tag
+  - All 4 plans: Trial ₹1 (7d), Monthly ₹29, 6-Month ₹150, Yearly ₹280
+  - On payment success: call `activateSubscription()` and refresh subscription context
+  - Razorpay secret only used backend-side (not in frontend); frontend only uses Key ID
+- Navigation restructured: Dashboard, Alarms, Tools, Subscription, Settings (5 tabs)
+- Tools section (`/tools`) with sub-pages: Calculator, Calendar, World Clock
+- `pages/ToolsPage.tsx` with tabs for Calculator, Calendar, World Clock
+- World Clock: show time in India, USA, UK, UAE, Japan, Australia
+- Dashboard page improvements: total alarms, next alarm, subscription status, quick create button
+- Selfie verification: replace oval with square face detection box + "Fit your face inside the box" instruction
 
 ### Modify
-- **PrivacyPolicyPage**: Replace content sections with the user-provided Privacy Policy text (same section structure, updated copy, contact email = support@smartselfiealarm.com)
-- **TermsAndConditionsPage**: Replace content with user-provided Terms & Conditions text, contact = support@smartselfiealarm.com
-- **RefundPolicyPage**: Replace content with user-provided Refund Policy text, contact = support@smartselfiealarm.com
-- **AboutPage**:
-  - Replace description paragraphs with user-provided About Us text
-  - Update feature list to match: Selfie Verification Alarm, Live Face Detection, Multiple Alarm Scheduling, Clean Mobile Friendly Interface, Smart Productivity Tool
-  - Update subscription plans shown to match new pricing: Trial ₹1 / 7 days, Monthly ₹29/month, 6-Month ₹150, Yearly ₹280 (Best Value)
-  - Update contact email to smartselfiealarm@gmail.com
-  - Keep Key Features, Technology, and Legal sections intact
-- **SubscriptionPage**:
-  - Replace plan list: Free Trial ₹1 (7 days), Monthly ₹29/month, 6-Month ₹150, Yearly ₹280 ("Best Value" badge)
-  - Discount calculation: monthly_total_6 = 29*6 = 174; (174-150)/174 ≈ 14% OFF for 6-month; yearly: 29*12=348; (348-280)/348 ≈ 20% OFF for yearly
-  - Yearly plan highlighted with "Best Value" badge
-  - Small note: "Subscriptions renew automatically. Cancel anytime."
-- **Selfie verification face guide circle**: Increase from ~50-60% width to 70-80% of screen width, centered
+- Remove all `firebase/*` imports and replace with `@supabase/supabase-js`
+- `lib/firebase.ts` → `lib/supabase.ts`
+- `lib/alarmService.ts` → use Supabase `alarms` table instead of Firestore
+- `lib/subscriptionService.ts` → use Supabase `users` table instead of Firestore
+- `context/AuthContext.tsx` → use Supabase Auth (email+password, Google OAuth redirect)
+- `context/AlarmContext.tsx` → update imports to use new alarm service
+- `context/SubscriptionContext.tsx` → update imports to use new subscription service
+- `pages/SubscriptionPage.tsx` → wire real Razorpay checkout
+- `components/Layout.tsx` → update nav items to: Dashboard, Alarms, Tools, Subscription, Settings
+- `components/FaceGuide.tsx` → change from oval to square box overlay
+- `App.tsx` → add `/tools` route (subscription-gated)
+- `package.json` → add `@supabase/supabase-js`, keep firebase removed
 
 ### Remove
-- Nothing removed structurally
+- `lib/firebase.ts`
+- `lib/webview.ts` (webview detection no longer needed for auth flow since Supabase OAuth uses redirect)
+- All `firebase/*` npm imports from `package.json`
 
 ## Implementation Plan
-1. Update `SubscriptionPage.tsx` — new 4 plans array with correct pricing and badges
-2. Update `PrivacyPolicyPage.tsx` — replace sections array with user-provided content
-3. Update `TermsAndConditionsPage.tsx` — replace sections array with user-provided content
-4. Update `RefundPolicyPage.tsx` — replace sections array with user-provided content
-5. Update `AboutPage.tsx` — update description, feature list, subscription plans table, contact email
-6. Update `FaceGuide.tsx` (or wherever the selfie circle size is defined) to 70-80% width
-7. Validate build
+1. Add `@supabase/supabase-js` to `package.json`, remove `firebase` packages
+2. Create `lib/supabase.ts` with the provided credentials
+3. Create new `lib/alarmService.ts` using Supabase client (CRUD on `alarms` table)
+4. Create new `lib/subscriptionService.ts` using Supabase client (`users` table)
+5. Rewrite `context/AuthContext.tsx` for Supabase Auth
+6. Update `context/AlarmContext.tsx` imports
+7. Update `context/SubscriptionContext.tsx` imports
+8. Update `pages/SubscriptionPage.tsx` with Razorpay live checkout
+9. Create `pages/ToolsPage.tsx` (Calculator + Calendar + World Clock tabs)
+10. Update `components/Layout.tsx` nav structure (5 tabs: Dashboard, Alarms, Tools, Subscription, Settings)
+11. Update `components/FaceGuide.tsx` square overlay
+12. Update `App.tsx` routes
+13. Update `pages/DashboardPage.tsx` with stats section
+14. Remove firebase.ts and webview.ts

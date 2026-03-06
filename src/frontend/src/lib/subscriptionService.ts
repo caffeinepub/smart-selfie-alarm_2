@@ -1,7 +1,6 @@
-import { Timestamp, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
-import { db } from "./firebase";
+import { supabase } from "./supabase";
 
-export type PlanType = "trial" | "monthly" | "halfYearly" | "free";
+export type PlanType = "trial" | "monthly" | "halfYearly" | "yearly" | "free";
 export type SubscriptionStatus = "active" | "trial" | "expired" | "canceled";
 
 export interface UserSubscription {
@@ -19,15 +18,65 @@ export interface UserSubscription {
   } | null;
 }
 
-/** Create a 7-day trial subscription for a new verified user */
+function rowToSubscription(row: Record<string, unknown>): UserSubscription {
+  return {
+    email: String(row.email),
+    planType: row.plan_type as PlanType,
+    subscriptionStatus: row.subscription_status as SubscriptionStatus,
+    subscriptionStartDate: new Date(String(row.subscription_start_date)),
+    subscriptionExpiryDate: new Date(String(row.subscription_expiry_date)),
+    autoRenew: Boolean(row.auto_renew),
+    razorpaySubscriptionId:
+      row.razorpay_subscription_id != null
+        ? String(row.razorpay_subscription_id)
+        : null,
+    lastPayment:
+      row.last_payment_amount != null
+        ? {
+            amount: Number(row.last_payment_amount),
+            date: row.last_payment_date
+              ? new Date(String(row.last_payment_date))
+              : null,
+            txnId:
+              row.last_payment_txn_id != null
+                ? String(row.last_payment_txn_id)
+                : null,
+          }
+        : null,
+  };
+}
+
+/** Create a 7-day trial subscription for a new user */
 export async function createTrialSubscription(
   uid: string,
   email: string,
 ): Promise<UserSubscription> {
   const now = new Date();
-  const expiryDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // +7 days
+  const expiryDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-  const subscription: UserSubscription = {
+  const row = {
+    id: uid,
+    email,
+    plan_type: "trial",
+    subscription_status: "trial",
+    subscription_start_date: now.toISOString(),
+    subscription_expiry_date: expiryDate.toISOString(),
+    auto_renew: false,
+    razorpay_subscription_id: null,
+    last_payment_amount: null,
+    last_payment_date: null,
+    last_payment_txn_id: null,
+  };
+
+  // upsert so re-login doesn't fail
+  const { error } = await supabase.from("users").upsert([row], {
+    onConflict: "id",
+    ignoreDuplicates: true,
+  });
+
+  if (error) throw new Error(error.message);
+
+  return {
     email,
     planType: "trial",
     subscriptionStatus: "trial",
@@ -37,54 +86,21 @@ export async function createTrialSubscription(
     razorpaySubscriptionId: null,
     lastPayment: null,
   };
-
-  await setDoc(doc(db, "users", uid), {
-    email,
-    planType: "trial",
-    subscriptionStatus: "trial",
-    subscriptionStartDate: Timestamp.fromDate(now),
-    subscriptionExpiryDate: Timestamp.fromDate(expiryDate),
-    autoRenew: false,
-    razorpaySubscriptionId: null,
-    lastPayment: null,
-  });
-
-  return subscription;
 }
 
-/** Fetch the subscription document for a user */
+/** Fetch the subscription for a user */
 export async function getUserSubscription(
   uid: string,
 ): Promise<UserSubscription | null> {
-  const snap = await getDoc(doc(db, "users", uid));
-  if (!snap.exists()) return null;
-  const data = snap.data();
-  return {
-    email: data.email as string,
-    planType: data.planType as PlanType,
-    subscriptionStatus: data.subscriptionStatus as SubscriptionStatus,
-    subscriptionStartDate:
-      data.subscriptionStartDate instanceof Timestamp
-        ? data.subscriptionStartDate.toDate()
-        : new Date(data.subscriptionStartDate as string),
-    subscriptionExpiryDate:
-      data.subscriptionExpiryDate instanceof Timestamp
-        ? data.subscriptionExpiryDate.toDate()
-        : new Date(data.subscriptionExpiryDate as string),
-    autoRenew: data.autoRenew as boolean,
-    razorpaySubscriptionId: (data.razorpaySubscriptionId as string) ?? null,
-    lastPayment: data.lastPayment
-      ? {
-          amount: (data.lastPayment as { amount: number }).amount,
-          date:
-            (data.lastPayment as { date: Timestamp | null }).date instanceof
-            Timestamp
-              ? (data.lastPayment as { date: Timestamp }).date.toDate()
-              : null,
-          txnId: (data.lastPayment as { txnId: string | null }).txnId ?? null,
-        }
-      : null,
-  };
+  const { data, error } = await supabase
+    .from("users")
+    .select("*")
+    .eq("id", uid)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  return rowToSubscription(data);
 }
 
 /** Check if subscription is currently active (including trial) */
@@ -101,33 +117,39 @@ export function isSubscriptionActive(sub: UserSubscription | null): boolean {
   return true;
 }
 
-/**
- * Placeholder: update subscription after Razorpay payment success webhook.
- * Call this from the webhook handler when Razorpay provides keys.
- */
+const PLAN_DURATION: Record<string, number> = {
+  trial: 7,
+  monthly: 30,
+  halfYearly: 183,
+  yearly: 365,
+};
+
+/** Activate subscription after successful Razorpay payment */
 export async function activateSubscription(
   uid: string,
   planType: PlanType,
-  durationDays: number,
-  razorpaySubscriptionId: string,
+  razorpayPaymentId: string,
   paymentAmount: number,
-  txnId: string,
 ): Promise<void> {
   const now = new Date();
+  const durationDays = PLAN_DURATION[planType] ?? 30;
   const expiryDate = new Date(
     now.getTime() + durationDays * 24 * 60 * 60 * 1000,
   );
-  await updateDoc(doc(db, "users", uid), {
-    planType,
-    subscriptionStatus: "active",
-    subscriptionStartDate: Timestamp.fromDate(now),
-    subscriptionExpiryDate: Timestamp.fromDate(expiryDate),
-    autoRenew: true,
-    razorpaySubscriptionId,
-    lastPayment: {
-      amount: paymentAmount,
-      date: Timestamp.fromDate(now),
-      txnId,
-    },
-  });
+
+  const { error } = await supabase
+    .from("users")
+    .update({
+      plan_type: planType,
+      subscription_status: planType === "trial" ? "trial" : "active",
+      subscription_start_date: now.toISOString(),
+      subscription_expiry_date: expiryDate.toISOString(),
+      auto_renew: planType !== "trial",
+      last_payment_amount: paymentAmount,
+      last_payment_date: now.toISOString(),
+      last_payment_txn_id: razorpayPaymentId,
+    })
+    .eq("id", uid);
+
+  if (error) throw new Error(error.message);
 }

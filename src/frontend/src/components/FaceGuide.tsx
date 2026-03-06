@@ -1,10 +1,10 @@
 /**
- * FaceGuide — Apple FaceID-style face framing overlay.
+ * FaceGuide — Square face detection box overlay.
  *
  * States:
- *  "idle"    → dashed grey ring + scanning line
+ *  "idle"    → dashed grey border
  *  "looking" → amber/yellow — face detected but condition not met
- *  "hold"    → blue with progress — task is valid, timing window active
+ *  "hold"    → purple with progress — task is valid, timing window active
  *  "success" → green — task/step complete
  *  "error"   → red — multiple faces or invalid frame
  */
@@ -14,7 +14,6 @@ export type FaceGuideState = "idle" | "looking" | "hold" | "success" | "error";
 
 interface FaceGuideProps {
   state: FaceGuideState;
-  /** 0–1 progress value, shown as arc when in "hold" state */
   progress?: number;
   label?: string;
 }
@@ -24,17 +23,17 @@ const STATE_COLORS: Record<
   { stroke: string; glow: string; scanline: string }
 > = {
   idle: {
-    stroke: "rgba(255,255,255,0.25)",
+    stroke: "rgba(255,255,255,0.30)",
     glow: "transparent",
     scanline: "rgba(255,255,255,0.3)",
   },
   looking: {
-    stroke: "rgba(251,191,36,0.75)",
-    glow: "rgba(251,191,36,0.15)",
+    stroke: "rgba(251,191,36,0.80)",
+    glow: "rgba(251,191,36,0.12)",
     scanline: "rgba(251,191,36,0.5)",
   },
   hold: {
-    stroke: "rgba(139,92,246,0.9)",
+    stroke: "rgba(139,92,246,0.95)",
     glow: "rgba(109,40,217,0.20)",
     scanline: "rgba(139,92,246,0.6)",
   },
@@ -44,57 +43,21 @@ const STATE_COLORS: Record<
     scanline: "rgba(34,208,122,0.6)",
   },
   error: {
-    stroke: "rgba(255,77,106,0.9)",
+    stroke: "rgba(255,77,106,0.95)",
     glow: "rgba(255,77,106,0.18)",
     scanline: "rgba(255,77,106,0.4)",
   },
 };
 
-// Convert 0-1 progress to SVG arc path
-function describeArc(
-  cx: number,
-  cy: number,
-  r: number,
-  progress: number,
-): string {
-  if (progress <= 0) return "";
-  const clampedProgress = progress >= 1 ? 0.9999 : progress;
-  const startAngle = -Math.PI / 2;
-  const endAngle = startAngle + clampedProgress * 2 * Math.PI;
-  const x1 = cx + r * Math.cos(startAngle);
-  const y1 = cy + r * Math.sin(startAngle);
-  const x2 = cx + r * Math.cos(endAngle);
-  const y2 = cy + r * Math.sin(endAngle);
-  const largeArc = clampedProgress > 0.5 ? 1 : 0;
-  return `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2}`;
-}
-
-// Corner bracket path helper — draws one L-shaped bracket
-function cornerBracket(
-  x: number,
-  y: number,
-  dirX: 1 | -1,
-  dirY: 1 | -1,
-  size = 20,
-  padding = 8,
-): string {
-  const ax = x + dirX * padding;
-  const ay = y + dirY * padding;
-  return `M ${ax + dirX * size} ${ay} L ${ax} ${ay} L ${ax} ${ay + dirY * size}`;
-}
-
 export function FaceGuide({ state, progress = 0, label }: FaceGuideProps) {
   const colors = STATE_COLORS[state];
 
-  // Oval dimensions
-  const W = 280;
-  const H = 340;
-  const cx = W / 2;
-  const cy = H / 2;
-  const rx = cx - 4;
-  const ry = cy - 4;
+  // Square dimensions — 75% of typical mobile screen width capped at 300px
+  const SIZE = 300;
+  const CORNER = 28; // corner radius for the square
 
-  // (perimeter unused — dashed ring uses strokeDasharray directly)
+  const borderColor = colors.stroke;
+  const isActive = state !== "idle";
 
   return (
     <div
@@ -103,90 +66,105 @@ export function FaceGuide({ state, progress = 0, label }: FaceGuideProps) {
     >
       <div
         className="relative flex items-center justify-center"
-        style={{ width: W, height: H }}
+        style={{ width: SIZE, height: SIZE }}
       >
-        {/* ── Ambient fill glow behind the oval ── */}
+        {/* Ambient fill glow */}
         <div
-          className="absolute inset-0 rounded-full transition-colors duration-500"
+          className="absolute inset-0 transition-colors duration-500"
           style={{
             background: colors.glow,
-            borderRadius: "50%",
-            filter: "blur(20px)",
-            transform: "scale(0.85)",
+            borderRadius: CORNER,
+            filter: "blur(24px)",
+            transform: "scale(0.9)",
           }}
         />
 
-        <svg
-          width={W}
-          height={H}
-          viewBox={`0 0 ${W} ${H}`}
-          style={{ position: "absolute", top: 0, left: 0, overflow: "visible" }}
-          aria-hidden="true"
-          role="presentation"
-        >
-          {/* ── Base oval ring — dashed in idle, solid otherwise ── */}
-          <ellipse
-            cx={cx}
-            cy={cy}
-            rx={rx}
-            ry={ry}
-            fill="none"
-            stroke={colors.stroke}
-            strokeWidth={state === "idle" ? 1.5 : 2}
-            strokeDasharray={state === "idle" ? "6 5" : "none"}
-            style={{ transition: "stroke 0.35s ease, stroke-width 0.35s ease" }}
+        {/* Main square border */}
+        <div
+          className="absolute inset-0 transition-all duration-400"
+          style={{
+            borderRadius: CORNER,
+            border: `2.5px ${state === "idle" ? "dashed" : "solid"} ${borderColor}`,
+            boxShadow: isActive
+              ? `0 0 0 1px ${borderColor}40, inset 0 0 0 1px ${borderColor}20, 0 0 24px ${borderColor}30`
+              : "none",
+          }}
+        />
+
+        {/* Corner accent lines — thicker visible corners */}
+        {(
+          [
+            { top: -2, left: -2, borderTop: true, borderLeft: true },
+            { top: -2, right: -2, borderTop: true, borderRight: true },
+            { bottom: -2, left: -2, borderBottom: true, borderLeft: true },
+            { bottom: -2, right: -2, borderBottom: true, borderRight: true },
+          ] as Array<{
+            top?: number;
+            bottom?: number;
+            left?: number;
+            right?: number;
+            borderTop?: boolean;
+            borderBottom?: boolean;
+            borderLeft?: boolean;
+            borderRight?: boolean;
+          }>
+        ).map((pos, i) => (
+          <div
+            // biome-ignore lint/suspicious/noArrayIndexKey: static corners
+            key={i}
+            className="absolute transition-all duration-400"
+            style={{
+              width: 32,
+              height: 32,
+              ...("top" in pos ? { top: pos.top } : {}),
+              ...("bottom" in pos ? { bottom: pos.bottom } : {}),
+              ...("left" in pos ? { left: pos.left } : {}),
+              ...("right" in pos ? { right: pos.right } : {}),
+              borderTop: pos.borderTop ? `3.5px solid ${borderColor}` : "none",
+              borderBottom: pos.borderBottom
+                ? `3.5px solid ${borderColor}`
+                : "none",
+              borderLeft: pos.borderLeft
+                ? `3.5px solid ${borderColor}`
+                : "none",
+              borderRight: pos.borderRight
+                ? `3.5px solid ${borderColor}`
+                : "none",
+              borderRadius:
+                pos.borderTop && pos.borderLeft
+                  ? `${CORNER}px 0 0 0`
+                  : pos.borderTop && pos.borderRight
+                    ? `0 ${CORNER}px 0 0`
+                    : pos.borderBottom && pos.borderLeft
+                      ? `0 0 0 ${CORNER}px`
+                      : `0 0 ${CORNER}px 0`,
+              filter: isActive ? `drop-shadow(0 0 4px ${borderColor})` : "none",
+            }}
           />
+        ))}
 
-          {/* ── Progress arc overlay for "hold" state ── */}
-          {state === "hold" && progress > 0 && (
-            <path
-              d={describeArc(cx, cy, (rx + ry) / 2, progress)}
-              fill="none"
-              stroke="rgba(139,92,246,1)"
-              strokeWidth={3}
-              strokeLinecap="round"
-              style={{ filter: "drop-shadow(0 0 6px rgba(139,92,246,0.7))" }}
-            />
-          )}
+        {/* Progress fill — bottom-to-top fill for "hold" state */}
+        {state === "hold" && progress > 0 && (
+          <div
+            className="absolute bottom-0 left-0 right-0 transition-all"
+            style={{
+              height: `${Math.min(progress * 100, 100)}%`,
+              background: "rgba(139,92,246,0.08)",
+              borderRadius: `0 0 ${CORNER}px ${CORNER}px`,
+              borderTop: "1px solid rgba(139,92,246,0.2)",
+            }}
+          />
+        )}
 
-          {/* ── Corner brackets — the FaceID signature ── */}
-          {(["tl", "tr", "bl", "br"] as const).map((corner) => {
-            const isRight = corner.endsWith("r");
-            const isBottom = corner.startsWith("b");
-            const bx = isRight ? W : 0;
-            const by = isBottom ? H : 0;
-            const dx: 1 | -1 = isRight ? -1 : 1;
-            const dy: 1 | -1 = isBottom ? -1 : 1;
-            return (
-              <path
-                key={corner}
-                d={cornerBracket(bx, by, dx, dy, 22, 10)}
-                fill="none"
-                stroke={colors.stroke}
-                strokeWidth={state === "idle" ? 2 : 2.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{
-                  transition: "stroke 0.35s ease",
-                  filter:
-                    state !== "idle"
-                      ? `drop-shadow(0 0 4px ${colors.stroke})`
-                      : "none",
-                }}
-              />
-            );
-          })}
-        </svg>
-
-        {/* ── Scanning line — only when idle or looking ── */}
+        {/* Scanning line — idle/looking */}
         <AnimatePresence>
           {(state === "idle" || state === "looking") && (
             <motion.div
               key="scanline"
-              initial={{ top: "12%" }}
-              animate={{ top: ["12%", "80%", "12%"] }}
+              initial={{ top: "10%" }}
+              animate={{ top: ["10%", "85%", "10%"] }}
               transition={{
-                duration: 2.8,
+                duration: 2.4,
                 ease: "easeInOut",
                 repeat: Number.POSITIVE_INFINITY,
                 repeatType: "loop",
@@ -194,18 +172,18 @@ export function FaceGuide({ state, progress = 0, label }: FaceGuideProps) {
               exit={{ opacity: 0 }}
               style={{
                 position: "absolute",
-                left: "10%",
-                right: "10%",
-                height: "1px",
-                background: `linear-gradient(90deg, transparent 0%, ${colors.scanline} 30%, ${colors.scanline} 70%, transparent 100%)`,
-                borderRadius: "1px",
+                left: "5%",
+                right: "5%",
+                height: "1.5px",
+                background: `linear-gradient(90deg, transparent 0%, ${colors.scanline} 25%, ${colors.scanline} 75%, transparent 100%)`,
                 filter: `blur(0.5px) drop-shadow(0 0 3px ${colors.scanline})`,
+                borderRadius: "1px",
               }}
             />
           )}
         </AnimatePresence>
 
-        {/* ── Success checkmark pulse ── */}
+        {/* Success checkmark */}
         <AnimatePresence>
           {state === "success" && (
             <motion.div
@@ -216,17 +194,17 @@ export function FaceGuide({ state, progress = 0, label }: FaceGuideProps) {
               transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
               className="absolute flex items-center justify-center"
               style={{
-                width: 52,
-                height: 52,
+                width: 60,
+                height: 60,
                 borderRadius: "50%",
                 background:
-                  "linear-gradient(135deg, rgba(34,208,122,0.2), rgba(16,185,129,0.1))",
-                border: "2px solid rgba(34,208,122,0.5)",
+                  "linear-gradient(135deg, rgba(34,208,122,0.22), rgba(16,185,129,0.12))",
+                border: "2px solid rgba(34,208,122,0.6)",
               }}
             >
               <svg
-                width={24}
-                height={24}
+                width={28}
+                height={28}
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="rgba(34,208,122,1)"
@@ -241,9 +219,21 @@ export function FaceGuide({ state, progress = 0, label }: FaceGuideProps) {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Instruction inside box */}
+        <div
+          className="absolute bottom-4 left-2 right-2 text-center text-xs font-medium px-2 py-1 rounded-xl"
+          style={{
+            color: "rgba(255,255,255,0.75)",
+            background: "rgba(0,0,0,0.35)",
+            backdropFilter: "blur(6px)",
+          }}
+        >
+          Fit your face inside the box
+        </div>
       </div>
 
-      {/* ── Status label below oval ── */}
+      {/* Status label below box */}
       <AnimatePresence mode="wait">
         {label && (
           <motion.div
@@ -258,7 +248,7 @@ export function FaceGuide({ state, progress = 0, label }: FaceGuideProps) {
               left: "50%",
               transform: "translateX(-50%)",
               whiteSpace: "nowrap",
-              background: "rgba(0,0,0,0.5)",
+              background: "rgba(0,0,0,0.55)",
               backdropFilter: "blur(8px)",
               color:
                 state === "success"
@@ -270,7 +260,7 @@ export function FaceGuide({ state, progress = 0, label }: FaceGuideProps) {
                       : state === "looking"
                         ? "rgba(251,191,36,1)"
                         : "rgba(255,255,255,0.7)",
-              border: `1px solid ${colors.stroke}`,
+              border: `1px solid ${borderColor}`,
             }}
           >
             {label}
