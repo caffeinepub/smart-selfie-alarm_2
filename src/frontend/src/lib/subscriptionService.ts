@@ -1,233 +1,193 @@
 import { supabase } from "./supabase";
 
-export type PlanType = "monthly" | "halfYearly" | "yearly" | "free";
-export type SubscriptionStatus = "active" | "trial" | "expired" | "canceled";
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface UserSubscription {
+export type PlanType = "trial" | "monthly" | "free";
+export type SubscriptionStatus = "active" | "expired" | "free";
+
+export interface SubscriptionRow {
   id: string;
-  email: string;
-  planType: PlanType;
-  subscriptionStatus: SubscriptionStatus;
-  subscriptionStartDate: Date | null;
-  premiumExpiresAt: Date | null;
-  autoRenew: boolean;
-  isPremium: boolean;
-  trialUsed: boolean;
-  razorpaySubscriptionId: string | null;
-  razorpayPaymentId: string | null;
-  lastPaymentAmount: number | null;
+  user_id: string;
+  plan: PlanType; // NEW: was plan_type
+  status: SubscriptionStatus;
+  trial_start: string | null; // NEW: was start_date
+  trial_end: string | null; // NEW: was part of end_date
+  expires_at: string | null; // NEW: was end_date
+  trial_used: boolean;
+  razorpay_subscription_id: string | null;
+  razorpay_payment_id: string | null;
+  created_at: string | null;
 }
 
-function rowToSubscription(row: Record<string, unknown>): UserSubscription {
-  // Support both is_premium (canonical) and legacy premium
-  const isPremium =
-    row.is_premium != null ? Boolean(row.is_premium) : Boolean(row.premium);
-
-  // Support premium_expires_at (new) and subscription_expiry_date (legacy)
-  const premiumExpiresAt =
-    row.premium_expires_at != null
-      ? new Date(String(row.premium_expires_at))
-      : row.subscription_expiry_date != null
-        ? new Date(String(row.subscription_expiry_date))
-        : null;
-
-  return {
-    id: String(row.id ?? ""),
-    email: String(row.email ?? ""),
-    planType: (row.plan_type ?? "free") as PlanType,
-    subscriptionStatus: (row.subscription_status ??
-      "expired") as SubscriptionStatus,
-    subscriptionStartDate: row.subscription_start_date
-      ? new Date(String(row.subscription_start_date))
-      : null,
-    premiumExpiresAt,
-    autoRenew: Boolean(row.auto_renew),
-    isPremium,
-    trialUsed: Boolean(row.trial_used),
-    razorpaySubscriptionId:
-      row.razorpay_subscription_id != null
-        ? String(row.razorpay_subscription_id)
-        : null,
-    razorpayPaymentId:
-      row.razorpay_payment_id != null ? String(row.razorpay_payment_id) : null,
-    lastPaymentAmount:
-      row.last_payment_amount != null ? Number(row.last_payment_amount) : null,
-  };
-}
-
-/** Fetch the current user's subscription row */
-export async function getUserSubscription(
-  uid: string,
-): Promise<UserSubscription | null> {
-  const { data, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("id", uid)
-    .maybeSingle();
-
-  if (error) throw new Error(`getUserSubscription failed: ${error.message}`);
-  if (!data) return null;
-  return rowToSubscription(data as Record<string, unknown>);
-}
-
-/**
- * Ensure a row exists for the user (called after login).
- * Does NOT grant premium — just creates a bare row with trial_used=false.
- * The DB trigger also does this but we add a safety net here.
- */
-export async function ensureUserRow(uid: string, email: string): Promise<void> {
-  const { error } = await supabase.from("users").upsert(
-    {
-      id: uid,
-      email,
-      is_premium: false,
-      subscription_status: "expired",
-      trial_used: false,
-      auto_renew: false,
-    },
-    { onConflict: "id", ignoreDuplicates: true },
-  );
-  if (error) {
-    console.error("[subscriptionService] ensureUserRow failed:", error.message);
-  }
-}
-
-/** Whether the subscription is currently active (premium flag + expiry in future) */
-export function isSubscriptionActive(sub: UserSubscription | null): boolean {
-  if (!sub) return false;
-  if (!sub.isPremium) return false;
-  if (sub.subscriptionStatus === "canceled") return false;
-
-  const now = new Date();
-  const expiry = sub.premiumExpiresAt;
-  if (!expiry) return false;
-
-  // 48-hour grace period
-  const gracePeriodMs = 48 * 60 * 60 * 1000;
-  return now.getTime() <= expiry.getTime() + gracePeriodMs;
-}
-
-// ─── Plan catalogue ───────────────────────────────────────────────────────────
+// ─── Constants ───────────────────────────────────────────────────────────────
 
 export const RAZORPAY_KEY_ID = "rzp_live_SNnU8ftzmAC4jA";
 
-// Pre-created plan IDs in Razorpay dashboard
-export const RAZORPAY_PLAN_IDS: Record<string, string> = {
-  monthly: "plan_SONFVYmbADMnZR",
-  halfYearly: "plan_SONGMogC09Y1HQ",
-  yearly: "plan_SONGrpyyySiGEc",
-};
+// Post-trial monthly autopay plan
+export const RAZORPAY_MONTHLY_PLAN_ID = "plan_SONFVYmbADMnZR";
 
-// Prices in paise (1 INR = 100 paise)
-export const PLAN_PRICE_PAISE: Record<string, number> = {
-  monthly: 2900, // ₹29
-  halfYearly: 14900, // ₹149
-  yearly: 27900, // ₹279
-};
+const SUPABASE_URL = "https://ozorrmrvvhmtpoeelewb.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96b3JybXJ2dmhtdHBvZWVsZXdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3OTY3ODksImV4cCI6MjA4ODM3Mjc4OX0.t6mhVisTuS12QUD8M9b5DrLtlzcIhaILkaTSvoGuF_s";
 
-// Duration in days for each plan
-export const PLAN_DURATION_DAYS: Record<string, number> = {
-  monthly: 30,
-  halfYearly: 183,
-  yearly: 365,
-};
+// Edge Function URL for creating Razorpay subscriptions
+const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/create-subscription`;
 
-// ─── Activation ──────────────────────────────────────────────────────────────
+// ─── DB helpers ──────────────────────────────────────────────────────────────
 
 /**
- * Called client-side after Razorpay payment succeeds.
- * Tries the activate_premium RPC first; falls back to a direct upsert.
+ * Fetch the most recent subscription row for a user.
+ * Returns null if no row exists.
  */
-export async function activateSubscription(opts: {
-  uid: string;
-  planType: PlanType;
-  paymentId: string;
-  amountRupees: number;
-  subscriptionId?: string;
-}): Promise<void> {
-  const { uid, planType, paymentId, amountRupees, subscriptionId } = opts;
+export async function getUserSubscription(
+  uid: string,
+): Promise<SubscriptionRow | null> {
+  const { data, error } = await supabase
+    .from("subscriptions")
+    .select("*")
+    .eq("user_id", uid)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  const now = new Date();
-  const durationDays = PLAN_DURATION_DAYS[planType] ?? 30;
-  const expiryDate = new Date(
-    now.getTime() + durationDays * 24 * 60 * 60 * 1000,
-  );
-
-  console.log("[activateSubscription] Activating", {
-    uid,
-    planType,
-    paymentId,
-    amountRupees,
-    expiryDate: expiryDate.toISOString(),
-  });
-
-  // 1. Try the Supabase RPC (activate_premium stored function)
-  const { error: rpcError } = await supabase.rpc("activate_premium", {
-    p_user_id: uid,
-    p_payment_amount: amountRupees,
-    p_payment_id: paymentId,
-    p_plan_type: planType,
-    p_expires_at: expiryDate.toISOString(),
-  });
-
-  if (rpcError) {
-    console.warn(
-      "[activateSubscription] RPC failed, falling back to direct upsert:",
-      rpcError.message,
-    );
-
-    // 2. Fallback: direct upsert to users table
-    const payload: Record<string, unknown> = {
-      id: uid,
-      is_premium: true,
-      plan_type: planType,
-      subscription_status: "active",
-      subscription_start_date: now.toISOString(),
-      subscription_expiry_date: expiryDate.toISOString(),
-      premium_expires_at: expiryDate.toISOString(),
-      auto_renew: true,
-      last_payment_amount: amountRupees,
-      last_payment_date: now.toISOString(),
-      last_payment_txn_id: paymentId,
-      razorpay_payment_id: paymentId,
-      trial_used: true,
-    };
-    if (subscriptionId) {
-      payload.razorpay_subscription_id = subscriptionId;
-    }
-
-    const { error: upsertError } = await supabase
-      .from("users")
-      .upsert(payload, { onConflict: "id" });
-
-    if (upsertError) {
-      throw new Error(
-        `Activation failed: ${upsertError.message} (code: ${upsertError.code})`,
-      );
-    }
-  } else {
-    // RPC succeeded; also store subscription_id and payment_id if provided
-    if (subscriptionId || paymentId) {
-      const extra: Record<string, unknown> = { trial_used: true };
-      if (subscriptionId) extra.razorpay_subscription_id = subscriptionId;
-      if (paymentId) extra.razorpay_payment_id = paymentId;
-      await supabase.from("users").update(extra).eq("id", uid);
-    }
+  if (error) {
+    console.error("[getUserSubscription] Error:", error.message);
+    return null;
   }
-
-  console.log("[activateSubscription] Done — premium activated for", uid);
+  return (data as SubscriptionRow) ?? null;
 }
 
 /**
- * Mark trial_used = true before opening Razorpay checkout.
- * Called immediately when user taps "Start Free Trial".
+ * Ensure a bare subscriptions row exists for the user.
+ * Called after login. Does NOT grant access.
  */
-export async function markTrialUsed(uid: string): Promise<void> {
-  const { error } = await supabase
-    .from("users")
-    .update({ trial_used: true })
-    .eq("id", uid);
-  if (error) {
-    console.error("[markTrialUsed] Failed:", error.message);
+export async function ensureSubscriptionRow(uid: string): Promise<void> {
+  // Only insert if no row exists yet
+  const existing = await getUserSubscription(uid);
+  if (existing) return;
+
+  const { error } = await supabase.from("subscriptions").insert({
+    user_id: uid,
+    plan: "free",
+    status: "free",
+    trial_used: false,
+  });
+
+  if (error && error.code !== "23505") {
+    // 23505 = unique violation, safe to ignore
+    console.error("[ensureSubscriptionRow] Failed:", error.message);
   }
+}
+
+/**
+ * Check whether the subscription grants full access.
+ * Allow access if trial_end > now() OR expires_at > now() (with 48-hour grace).
+ */
+export function isSubscriptionActive(sub: SubscriptionRow | null): boolean {
+  if (!sub) return false;
+  const now = new Date();
+
+  // Trial window: active if trial_end is in the future
+  if (sub.trial_end) {
+    const trialEnd = new Date(sub.trial_end);
+    if (now <= trialEnd) return true;
+  }
+
+  // Paid subscription window: active if expires_at is in the future (with grace)
+  if (sub.expires_at) {
+    const expiresAt = new Date(sub.expires_at);
+    const grace = 48 * 60 * 60 * 1000; // 48-hour grace period
+    if (now.getTime() <= expiresAt.getTime() + grace) return true;
+  }
+
+  return false;
+}
+
+// ─── Razorpay Subscription creation ──────────────────────────────────────────
+
+/**
+ * Call the create-subscription Supabase Edge Function.
+ * Returns the Razorpay subscription_id (e.g. "sub_XXXXXXXXXX").
+ * The edge function creates a Razorpay subscription with:
+ *   - ₹1 charged immediately (trial auth payment)
+ *   - 7-day trial period
+ *   - ₹29/month auto-billing after trial
+ */
+export async function createRazorpaySubscription(
+  userId: string,
+  userEmail: string,
+): Promise<string> {
+  const res = await fetch(EDGE_FUNCTION_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      apikey: SUPABASE_ANON_KEY,
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      user_email: userEmail,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`create-subscription failed (${res.status}): ${body}`);
+  }
+
+  const json = await res.json();
+  const subscriptionId =
+    json?.subscription_id ?? json?.id ?? json?.subscriptionId;
+
+  if (!subscriptionId) {
+    throw new Error(
+      `create-subscription returned no subscription_id. Response: ${JSON.stringify(json)}`,
+    );
+  }
+
+  console.log("[createRazorpaySubscription] subscription_id:", subscriptionId);
+  return subscriptionId as string;
+}
+
+// ─── Activation ───────────────────────────────────────────────────────────────
+
+/**
+ * Optimistic local activation after checkout success.
+ * The webhook is the real source of truth — this gives immediate UI feedback.
+ * Uses new column names: plan, trial_start, trial_end, expires_at.
+ */
+export async function activateTrialLocally(
+  uid: string,
+  subscriptionId: string,
+  paymentId?: string,
+): Promise<void> {
+  const now = new Date();
+  const trialEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // +7 days
+
+  console.log("[activateTrialLocally] Activating for", uid);
+
+  // Upsert by user_id (one subscription row per user)
+  const { error } = await supabase.from("subscriptions").upsert(
+    {
+      user_id: uid,
+      plan: "trial",
+      status: "active",
+      trial_used: true,
+      trial_start: now.toISOString(),
+      trial_end: trialEnd.toISOString(),
+      expires_at: trialEnd.toISOString(),
+      razorpay_subscription_id: subscriptionId,
+      razorpay_payment_id: paymentId ?? null,
+    },
+    { onConflict: "user_id" },
+  );
+
+  if (error) {
+    throw new Error(`activateTrialLocally failed: ${error.message}`);
+  }
+
+  console.log(
+    "[activateTrialLocally] Done — trial access granted until",
+    trialEnd.toISOString(),
+  );
 }

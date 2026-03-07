@@ -1,293 +1,362 @@
-/**
- * Supabase Edge Function: razorpay-webhook
- *
- * Deploy URL: https://ozorrmrvvhmtpoeelewb.supabase.co/functions/v1/razorpay-webhook
- *
- * Configure in Razorpay Dashboard → Webhooks:
- *   URL:    https://ozorrmrvvhmtpoeelewb.supabase.co/functions/v1/razorpay-webhook
- *   Events: subscription.activated, subscription.charged, payment.captured
- *   Secret: <set RAZORPAY_WEBHOOK_SECRET in Supabase Edge Function secrets>
- *
- * Required Supabase secrets (set via: supabase secrets set KEY=value):
- *   RAZORPAY_WEBHOOK_SECRET   — from Razorpay Dashboard → Webhooks → Secret
- *   SUPABASE_SERVICE_ROLE_KEY — service role key (bypasses RLS)
- */
+// Supabase Edge Function: razorpay-webhook
+// Handles Razorpay payment events and updates subscriptions via the
+// activate_premium RPC (NEW SCHEMA: plan, trial_start, trial_end, expires_at).
+//
+// Deploy:
+//   supabase functions deploy razorpay-webhook
+//
+// Required secrets:
+//   RAZORPAY_WEBHOOK_SECRET   = (from Razorpay Dashboard → Webhooks → Secret)
+//   SUPABASE_SERVICE_ROLE_KEY = (from Supabase → Settings → API)
+//
+// Webhook URL (set in Razorpay Dashboard):
+//   https://ozorrmrvvhmtpoeelewb.supabase.co/functions/v1/razorpay-webhook
+//
+// Events to subscribe:
+//   subscription.activated
+//   invoice.paid
+//   payment.captured
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 
 const SUPABASE_URL = "https://ozorrmrvvhmtpoeelewb.supabase.co";
 
-// ─── Plan catalogue (mirrors frontend) ───────────────────────────────────────
-
-const PLAN_DURATION_DAYS: Record<string, number> = {
-  monthly: 30,
-  halfYearly: 183,
-  "6months": 183,
-  sixmonths: 183,
-  yearly: 365,
-  annual: 365,
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-razorpay-signature",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-/** Map Razorpay plan_id → internal plan type */
-const PLAN_ID_MAP: Record<string, string> = {
-  plan_SONFVYmbADMnZR: "monthly",
-  plan_SONGMogC09Y1HQ: "halfYearly",
-  plan_SONGrpyyySiGEc: "yearly",
-};
-
-function normalisePlan(raw: string): string {
-  if (PLAN_ID_MAP[raw]) return PLAN_ID_MAP[raw];
-  const r = raw.toLowerCase().replace(/[-_\s]/g, "");
-  if (r === "monthly") return "monthly";
-  if (r === "halfyearly" || r === "6months" || r === "sixmonths") return "halfYearly";
-  if (r === "yearly" || r === "annual") return "yearly";
-  return "monthly"; // safe fallback
-}
-
-// ─── HMAC signature verification ─────────────────────────────────────────────
-
+// ── HMAC-SHA256 signature verification ──────────────────────────────────────
 async function verifySignature(
   body: string,
   signature: string,
   secret: string,
 ): Promise<boolean> {
   try {
-    const enc = new TextEncoder();
+    const encoder = new TextEncoder();
     const key = await crypto.subtle.importKey(
       "raw",
-      enc.encode(secret),
+      encoder.encode(secret),
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["sign"],
     );
-    const sigBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(body));
-    const expected = Array.from(new Uint8Array(sigBuffer))
+    const sigBytes = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      encoder.encode(body),
+    );
+    const computed = Array.from(new Uint8Array(sigBytes))
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
-    // Constant-time comparison
-    if (expected.length !== signature.length) return false;
-    let diff = 0;
-    for (let i = 0; i < expected.length; i++) {
-      diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
-    }
-    return diff === 0;
+    return computed === signature;
   } catch {
     return false;
   }
 }
 
-// ─── Main handler ─────────────────────────────────────────────────────────────
+// ── Helper: extract user_id from notes object ────────────────────────────────
+function extractUserId(notes: unknown): string {
+  if (!notes || typeof notes !== "object") return "";
+  const n = notes as Record<string, unknown>;
+  return String(n.user_id ?? "").trim();
+}
 
-Deno.serve(async (req: Request) => {
-  // CORS preflight
+serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type, X-Razorpay-Signature",
-      },
-    });
+    return new Response("ok", { headers: CORS_HEADERS });
   }
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+    return new Response("Method Not Allowed", {
       status: 405,
+      headers: CORS_HEADERS,
     });
   }
 
-  const bodyText = await req.text();
-  let payload: Record<string, unknown>;
+  // ── Read secrets ─────────────────────────────────────────────────────────
+  const WEBHOOK_SECRET = Deno.env.get("RAZORPAY_WEBHOOK_SECRET");
+  const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-  try {
-    payload = JSON.parse(bodyText);
-  } catch {
-    console.error("[razorpay-webhook] Invalid JSON");
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400 });
+  if (!SERVICE_ROLE_KEY) {
+    console.error("[razorpay-webhook] Missing SUPABASE_SERVICE_ROLE_KEY");
+    return new Response("Server misconfiguration", {
+      status: 500,
+      headers: CORS_HEADERS,
+    });
   }
 
-  // Verify signature when secret is configured
-  const webhookSecret = Deno.env.get("RAZORPAY_WEBHOOK_SECRET");
-  if (webhookSecret) {
+  // ── Read raw body ────────────────────────────────────────────────────────
+  const rawBody = await req.text();
+
+  // ── Verify Razorpay signature ─────────────────────────────────────────────
+  if (WEBHOOK_SECRET) {
     const sig = req.headers.get("x-razorpay-signature") ?? "";
-    if (!sig) {
-      console.error("[razorpay-webhook] Missing signature header");
-      return new Response(JSON.stringify({ error: "Missing signature" }), { status: 401 });
-    }
-    const valid = await verifySignature(bodyText, sig, webhookSecret);
+    const valid = await verifySignature(rawBody, sig, WEBHOOK_SECRET);
     if (!valid) {
-      console.error("[razorpay-webhook] Signature mismatch");
-      return new Response(JSON.stringify({ error: "Invalid signature" }), { status: 401 });
+      console.error("[razorpay-webhook] Invalid signature — rejecting");
+      return new Response("Invalid signature", {
+        status: 400,
+        headers: CORS_HEADERS,
+      });
     }
   } else {
-    console.warn("[razorpay-webhook] RAZORPAY_WEBHOOK_SECRET not set — skipping verification");
-  }
-
-  const event = String(payload.event ?? "");
-  console.log("[razorpay-webhook] Event:", event);
-
-  const handledEvents = [
-    "subscription.activated",
-    "subscription.charged",
-    "payment.captured",
-  ];
-
-  if (handledEvents.includes(event)) {
-    try {
-      await handlePremiumActivation(payload, event);
-    } catch (err) {
-      console.error("[razorpay-webhook] handlePremiumActivation error:", err);
-      // Always return 200 so Razorpay does not keep retrying
-      return new Response(
-        JSON.stringify({ received: true, error: String(err) }),
-        { status: 200 },
-      );
-    }
-  } else {
-    console.log("[razorpay-webhook] Ignoring event:", event);
-  }
-
-  return new Response(JSON.stringify({ received: true }), { status: 200 });
-});
-
-// ─── Activation logic ─────────────────────────────────────────────────────────
-
-async function handlePremiumActivation(
-  payload: Record<string, unknown>,
-  event: string,
-) {
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!serviceRoleKey) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY secret not configured");
-  }
-
-  const supabase = createClient(SUPABASE_URL, serviceRoleKey, {
-    auth: { persistSession: false },
-  });
-
-  // Extract relevant entities
-  const inner = payload.payload as Record<string, unknown> | undefined;
-
-  let userId = "";
-  let paymentId = "";
-  let amountPaise = 0;
-  let planType = "monthly";
-  let subscriptionId = "";
-
-  if (event === "subscription.activated" || event === "subscription.charged") {
-    // Shape: { payload: { subscription: { entity: {...} }, payment: { entity: {...} } } }
-    const subEntity = (
-      (inner?.subscription as Record<string, unknown>)?.entity as Record<string, unknown>
-    ) ?? {};
-    const payEntity = (
-      (inner?.payment as Record<string, unknown>)?.entity as Record<string, unknown>
-    ) ?? {};
-
-    subscriptionId = String(subEntity.id ?? "");
-    const notes = (subEntity.notes ?? payEntity.notes ?? {}) as Record<string, string>;
-    userId = notes.user_id ?? notes.userId ?? "";
-    const notePlan = notes.plan_type ?? notes.planType ?? "";
-    const notePlanId = notes.plan_id ?? notes.planId ?? "";
-    const rzpPlanId = String(subEntity.plan_id ?? "");
-
-    // Resolve plan: notes → plan_id map → fallback
-    if (notePlan) {
-      planType = normalisePlan(notePlan);
-    } else if (notePlanId) {
-      planType = normalisePlan(notePlanId);
-    } else if (rzpPlanId) {
-      planType = normalisePlan(rzpPlanId);
-    }
-
-    paymentId = String(payEntity.id ?? "");
-    amountPaise = Number(payEntity.amount ?? 0);
-  } else if (event === "payment.captured") {
-    // Shape: { payload: { payment: { entity: {...} } } }
-    const payEntity = (
-      (inner?.payment as Record<string, unknown>)?.entity as Record<string, unknown>
-    ) ?? {};
-
-    paymentId = String(payEntity.id ?? "");
-    amountPaise = Number(payEntity.amount ?? 0);
-    const notes = (payEntity.notes ?? {}) as Record<string, string>;
-    userId = notes.user_id ?? notes.userId ?? "";
-    const notePlan = notes.plan_type ?? notes.planType ?? "";
-    const notePlanId = notes.plan_id ?? notes.planId ?? "";
-    if (notePlan) {
-      planType = normalisePlan(notePlan);
-    } else if (notePlanId) {
-      planType = normalisePlan(notePlanId);
-    }
-  }
-
-  if (!userId) {
-    throw new Error(
-      `[razorpay-webhook] Cannot determine user_id from event ${event}. ` +
-        "Ensure notes.user_id is set in Razorpay checkout.",
+    console.warn(
+      "[razorpay-webhook] RAZORPAY_WEBHOOK_SECRET not set — skipping check",
     );
   }
 
-  const now = new Date();
-  const durationDays = PLAN_DURATION_DAYS[planType] ?? 30;
-  const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
-
-  console.log("[razorpay-webhook] Activating premium", {
-    userId,
-    planType,
-    paymentId,
-    amountPaise,
-    subscriptionId,
-    expiresAt: expiresAt.toISOString(),
-  });
-
-  // 1. Try activate_premium stored function
-  const { error: rpcError } = await supabase.rpc("activate_premium", {
-    p_user_id: userId,
-    p_payment_amount: amountPaise / 100,
-    p_payment_id: paymentId,
-    p_plan_type: planType,
-    p_expires_at: expiresAt.toISOString(),
-  });
-
-  if (rpcError) {
-    console.warn("[razorpay-webhook] RPC failed, using direct upsert:", rpcError.message);
-
-    // 2. Fallback direct upsert
-    const row: Record<string, unknown> = {
-      id: userId,
-      is_premium: true,
-      plan_type: planType,
-      subscription_status: "active",
-      subscription_start_date: now.toISOString(),
-      subscription_expiry_date: expiresAt.toISOString(),
-      premium_expires_at: expiresAt.toISOString(),
-      auto_renew: true,
-      trial_used: true,
-      last_payment_amount: amountPaise / 100,
-      last_payment_date: now.toISOString(),
-      last_payment_txn_id: paymentId,
-      razorpay_payment_id: paymentId,
-    };
-    if (subscriptionId) row.razorpay_subscription_id = subscriptionId;
-
-    const { error: upsertError } = await supabase
-      .from("users")
-      .upsert(row, { onConflict: "id" });
-
-    if (upsertError) {
-      throw new Error(
-        `Supabase upsert failed: ${upsertError.message} (code: ${upsertError.code})`,
-      );
-    }
-  } else if (subscriptionId || paymentId) {
-    // RPC succeeded; store extra IDs
-    const extra: Record<string, unknown> = { trial_used: true };
-    if (subscriptionId) extra.razorpay_subscription_id = subscriptionId;
-    if (paymentId) extra.razorpay_payment_id = paymentId;
-    await supabase.from("users").update(extra).eq("id", userId);
+  // ── Parse event ──────────────────────────────────────────────────────────
+  let event: { event: string; payload: Record<string, unknown> };
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return new Response("Invalid JSON", {
+      status: 400,
+      headers: CORS_HEADERS,
+    });
   }
 
-  console.log("[razorpay-webhook] Premium activated for", userId, {
-    plan: planType,
-    expires: expiresAt.toISOString(),
+  console.log("[razorpay-webhook] Received event:", event.event);
+
+  // ── Supabase service-role client (bypasses RLS) ──────────────────────────
+  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // subscription.activated
+  // Fired when the user completes the UPI mandate + ₹1 addon payment.
+  // → Activate 7-day trial via activate_premium(user_id, 'trial').
+  // ─────────────────────────────────────────────────────────────────────────
+  if (event.event === "subscription.activated") {
+    const sub = (
+      event.payload?.subscription as Record<string, unknown>
+    )?.entity as Record<string, unknown> | undefined;
+
+    if (!sub) {
+      console.warn("[razorpay-webhook] subscription.activated: missing entity");
+      return ok();
+    }
+
+    const subId = String(sub.id ?? "");
+    const userId = extractUserId(sub.notes);
+    const paymentEntity = (
+      event.payload?.payment as Record<string, unknown>
+    )?.entity as Record<string, unknown> | undefined;
+    const paymentId = String(paymentEntity?.id ?? "");
+
+    if (!userId) {
+      console.warn(
+        "[razorpay-webhook] subscription.activated: no user_id in notes. sub_id:",
+        subId,
+      );
+      return ok();
+    }
+
+    console.log(
+      "[razorpay-webhook] Activating trial — user:",
+      userId,
+      "sub:",
+      subId,
+    );
+
+    // Store Razorpay IDs
+    const { error: idErr } = await supabase.rpc("set_razorpay_subscription", {
+      p_user_id: userId,
+      p_subscription_id: subId,
+      p_payment_id: paymentId || null,
+    });
+    if (idErr) {
+      console.error(
+        "[razorpay-webhook] set_razorpay_subscription error:",
+        idErr.message,
+      );
+    }
+
+    // Activate trial
+    const { error } = await supabase.rpc("activate_premium", {
+      p_user_id: userId,
+      p_plan: "trial",
+    });
+
+    if (error) {
+      console.error(
+        "[razorpay-webhook] activate_premium(trial) error:",
+        error.message,
+      );
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    console.log("[razorpay-webhook] Trial activated for", userId);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // invoice.paid
+  // Fired every recurring billing cycle after trial ends.
+  // → Extend expires_at by 30 days via activate_premium(user_id, 'monthly').
+  // ─────────────────────────────────────────────────────────────────────────
+  if (event.event === "invoice.paid") {
+    const invoice = (
+      event.payload?.invoice as Record<string, unknown>
+    )?.entity as Record<string, unknown> | undefined;
+
+    if (!invoice) {
+      console.warn("[razorpay-webhook] invoice.paid: missing entity");
+      return ok();
+    }
+
+    const invoiceId = String(invoice.id ?? "");
+    const subId = String(invoice.subscription_id ?? "");
+    const paymentId = String(invoice.payment_id ?? "");
+
+    // Resolve user_id from invoice notes or by looking up the subscription row
+    let userId = extractUserId(invoice.notes);
+
+    if (!userId && subId) {
+      const { data } = await supabase
+        .from("subscriptions")
+        .select("user_id")
+        .eq("razorpay_subscription_id", subId)
+        .maybeSingle();
+      userId = data?.user_id ?? "";
+    }
+
+    if (!userId) {
+      console.warn(
+        "[razorpay-webhook] invoice.paid: could not resolve user_id. invoice:",
+        invoiceId,
+      );
+      return ok();
+    }
+
+    console.log(
+      "[razorpay-webhook] Extending monthly access — user:",
+      userId,
+      "invoice:",
+      invoiceId,
+    );
+
+    // Update latest payment ID
+    if (paymentId) {
+      await supabase
+        .from("subscriptions")
+        .update({ razorpay_payment_id: paymentId })
+        .eq("user_id", userId);
+    }
+
+    // Extend access
+    const { error } = await supabase.rpc("activate_premium", {
+      p_user_id: userId,
+      p_plan: "monthly",
+    });
+
+    if (error) {
+      console.error(
+        "[razorpay-webhook] activate_premium(monthly) error:",
+        error.message,
+      );
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    console.log("[razorpay-webhook] Monthly access extended for", userId);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // payment.captured
+  // Belt-and-suspenders: fires when the ₹1 addon charge is captured.
+  // Only activates trial if subscription.activated hasn't already done so.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (event.event === "payment.captured") {
+    const payment = (
+      event.payload?.payment as Record<string, unknown>
+    )?.entity as Record<string, unknown> | undefined;
+
+    if (!payment) {
+      console.warn("[razorpay-webhook] payment.captured: missing entity");
+      return ok();
+    }
+
+    const paymentId = String(payment.id ?? "");
+    const subscriptionId = String(
+      (payment as Record<string, unknown>).subscription_id ?? "",
+    );
+    const userId = extractUserId(payment.notes);
+
+    // Only handle subscription-linked payments with a known user
+    if (!userId || !subscriptionId) {
+      console.log(
+        "[razorpay-webhook] payment.captured: skipping — no user_id or not a subscription payment. payment_id:",
+        paymentId,
+      );
+      return ok();
+    }
+
+    // Avoid double-activating if subscription.activated already ran
+    const { data: existing } = await supabase
+      .from("subscriptions")
+      .select("status, trial_end")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    const alreadyActive =
+      existing?.status === "active" &&
+      existing?.trial_end &&
+      new Date(existing.trial_end) > new Date();
+
+    if (alreadyActive) {
+      console.log(
+        "[razorpay-webhook] payment.captured: trial already active for",
+        userId,
+        "— skipping",
+      );
+      return ok();
+    }
+
+    console.log(
+      "[razorpay-webhook] payment.captured: activating trial — user:",
+      userId,
+      "payment:",
+      paymentId,
+    );
+
+    await supabase.rpc("set_razorpay_subscription", {
+      p_user_id: userId,
+      p_subscription_id: subscriptionId,
+      p_payment_id: paymentId,
+    });
+
+    const { error } = await supabase.rpc("activate_premium", {
+      p_user_id: userId,
+      p_plan: "trial",
+    });
+
+    if (error) {
+      console.error(
+        "[razorpay-webhook] activate_premium(trial) via payment.captured error:",
+        error.message,
+      );
+    } else {
+      console.log(
+        "[razorpay-webhook] Trial activated via payment.captured for",
+        userId,
+      );
+    }
+  }
+
+  return ok();
+});
+
+function ok() {
+  return new Response(JSON.stringify({ received: true }), {
+    status: 200,
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
   });
 }

@@ -5,7 +5,7 @@ import {
   InputOTPGroup,
   InputOTPSlot,
 } from "@/components/ui/input-otp";
-import { AlarmClock, Loader2, MailCheck } from "lucide-react";
+import { AlarmClock, Eye, EyeOff, Loader2, MailCheck } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { useAuthContext } from "../context/AuthContext";
@@ -13,14 +13,31 @@ import { useAuthContext } from "../context/AuthContext";
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
 
 function validateEmail(email: string): string | null {
-  if (!email.trim()) return "Email is required. / ईमेल आवश्यक है।";
+  if (!email.trim()) return "Email is required.";
   if (!EMAIL_REGEX.test(email.trim()))
-    return "Please enter a valid email address. / मान्य ईमेल दर्ज करें।";
+    return "Please enter a valid email address.";
   return null;
 }
 
-function getOtpErrorMessage(code: string): string {
+function validatePassword(password: string): string | null {
+  if (!password) return "Password is required.";
+  if (password.length < 6) return "Password must be at least 6 characters.";
+  return null;
+}
+
+/**
+ * Map error codes to human-readable messages (bilingual: EN + हिंदी).
+ */
+function getAuthErrorMessage(code: string): string {
   switch (code) {
+    case "auth/wrong-password":
+      return "Incorrect password. Please try again. / पासवर्ड गलत है।";
+    case "auth/user-not-found":
+      return "No account found with this email. / इस ईमेल पर कोई अकाउंट नहीं है।";
+    case "auth/email-in-use":
+      return "This email is already registered. Please sign in. / यह ईमेल पहले से पंजीकृत है।";
+    case "auth/email-not-verified":
+      return "Please verify your email before signing in. / साइन इन से पहले ईमेल वेरीफाई करें।";
     case "auth/invalid-otp":
       return "Invalid or expired code. Please try again. / कोड गलत है या समय समाप्त हो गया।";
     case "auth/too-many-requests":
@@ -29,44 +46,112 @@ function getOtpErrorMessage(code: string): string {
       return "Failed to send code. Please try again. / कोड भेजने में विफल।";
     case "auth/otp-verify-failed":
       return "Verification failed. Please try again. / वेरिफिकेशन विफल।";
+    case "auth/signup-failed":
+      return "Sign up failed. Please try again. / साइन अप विफल।";
+    case "auth/signin-failed":
+      return "Sign in failed. Please try again. / साइन इन विफल।";
     default:
-      return `Something went wrong (${code || "unknown"}). Please try again. / कुछ गलत हुआ।`;
+      return "Something went wrong. Please try again. / कुछ गलत हुआ।";
   }
 }
 
-type AuthScreen = "email" | "otp";
+type AuthScreen = "auth" | "otp";
+type AuthTab = "signin" | "signup";
 
 export default function AuthPage() {
-  const { sendOtp, verifyOtp } = useAuthContext();
-  const [screen, setScreen] = useState<AuthScreen>("email");
+  const { sendOtp, verifyOtp, signUpWithPassword, signInWithPassword } =
+    useAuthContext();
+
+  const [screen, setScreen] = useState<AuthScreen>("auth");
+  const [activeTab, setActiveTab] = useState<AuthTab>("signin");
+
+  // Form fields
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [otp, setOtp] = useState("");
-  const [sendLoading, setSendLoading] = useState(false);
+
+  // Loading states
+  const [submitLoading, setSubmitLoading] = useState(false);
   const [verifyLoading, setVerifyLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
+
+  // Error display
   const [error, setError] = useState("");
 
-  const handleSendOtp = async (e: React.FormEvent) => {
+  // ── Sign In handler ─────────────────────────────────────────────────────
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
     const emailErr = validateEmail(email);
     if (emailErr) {
       setError(emailErr);
       return;
     }
-    setSendLoading(true);
+    const passErr = validatePassword(password);
+    if (passErr) {
+      setError(passErr);
+      return;
+    }
+
+    setSubmitLoading(true);
     try {
-      await sendOtp(email.trim());
-      setScreen("otp");
-      setOtp("");
+      await signInWithPassword(email.trim(), password);
+      // onAuthStateChange fires SIGNED_IN — routing handled by App.tsx
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";
-      setError(getOtpErrorMessage(code));
+      // If email not verified, switch to OTP verification flow
+      if (code === "auth/email-not-verified") {
+        setError("");
+        try {
+          await sendOtp(email.trim());
+          setScreen("otp");
+          setOtp("");
+        } catch {
+          setError(getAuthErrorMessage(code));
+        }
+      } else {
+        setError(getAuthErrorMessage(code));
+      }
     } finally {
-      setSendLoading(false);
+      setSubmitLoading(false);
     }
   };
 
+  // ── Sign Up handler ─────────────────────────────────────────────────────
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    const emailErr = validateEmail(email);
+    if (emailErr) {
+      setError(emailErr);
+      return;
+    }
+    const passErr = validatePassword(password);
+    if (passErr) {
+      setError(passErr);
+      return;
+    }
+
+    setSubmitLoading(true);
+    try {
+      const { needsOtp } = await signUpWithPassword(email.trim(), password);
+      if (needsOtp) {
+        setScreen("otp");
+        setOtp("");
+      }
+      // If needsOtp is false, onAuthStateChange fires and App.tsx routes
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code ?? "";
+      setError(getAuthErrorMessage(code));
+    } finally {
+      setSubmitLoading(false);
+    }
+  };
+
+  // ── OTP Verify handler ──────────────────────────────────────────────────
   const handleVerifyOtp = async () => {
     if (otp.length < 6) {
       setError("Please enter the full 6-digit code. / 6 अंकों का कोड दर्ज करें।");
@@ -79,13 +164,14 @@ export default function AuthPage() {
       // onAuthStateChange fires SIGNED_IN — routing handled by App.tsx
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";
-      setError(getOtpErrorMessage(code));
+      setError(getAuthErrorMessage(code));
       setOtp("");
     } finally {
       setVerifyLoading(false);
     }
   };
 
+  // ── OTP Resend handler ──────────────────────────────────────────────────
   const handleResend = async () => {
     setError("");
     setResendLoading(true);
@@ -94,21 +180,25 @@ export default function AuthPage() {
       setOtp("");
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";
-      setError(getOtpErrorMessage(code));
+      setError(getAuthErrorMessage(code));
     } finally {
       setResendLoading(false);
     }
   };
 
-  const backToEmail = () => {
-    setScreen("email");
+  const backToAuth = () => {
+    setScreen("auth");
     setError("");
     setOtp("");
   };
 
-  // ─────────────────────────────────────────────────────────
-  // Shared visual wrapper
-  // ─────────────────────────────────────────────────────────
+  const switchTab = (tab: AuthTab) => {
+    setActiveTab(tab);
+    setError("");
+    setPassword("");
+  };
+
+  // ─── Shared page shell ───────────────────────────────────────────────────
   return (
     <div
       className="min-h-screen flex flex-col overflow-hidden"
@@ -117,7 +207,7 @@ export default function AuthPage() {
       {/* Hero top-half */}
       <div
         className="relative flex flex-col items-center justify-end pb-10 pt-16 flex-shrink-0"
-        style={{ minHeight: "42vh" }}
+        style={{ minHeight: "40vh" }}
       >
         {/* Ambient glow */}
         <div
@@ -203,103 +293,376 @@ export default function AuthPage() {
       >
         <div className="px-6 pt-7 pb-8 w-full max-w-md mx-auto flex flex-col gap-5 flex-1">
           <AnimatePresence mode="wait">
-            {screen === "email" ? (
+            {/* ── Auth screen (Sign In / Sign Up tabs) ─────────────────────── */}
+            {screen === "auth" ? (
               <motion.div
-                key="email-screen"
+                key="auth-screen"
                 initial={{ opacity: 0, x: -16 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -16 }}
                 transition={{ duration: 0.25 }}
                 className="flex flex-col gap-5 flex-1"
               >
-                {/* Heading */}
-                <div>
-                  <h2
-                    className="text-xl font-bold text-white mb-1"
-                    style={{ letterSpacing: "-0.02em" }}
+                {/* ── Tab switcher ─────────────────────────────────────────── */}
+                <div
+                  className="flex rounded-2xl p-1"
+                  style={{ background: "rgba(255,255,255,0.05)" }}
+                >
+                  <button
+                    type="button"
+                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200"
+                    style={{
+                      background:
+                        activeTab === "signin"
+                          ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
+                          : "transparent",
+                      color: activeTab === "signin" ? "#fff" : "#64748b",
+                      boxShadow:
+                        activeTab === "signin"
+                          ? "0 2px 12px rgba(109,40,217,0.35)"
+                          : "none",
+                    }}
+                    onClick={() => switchTab("signin")}
+                    data-ocid="auth.tab"
                   >
-                    Sign in / Sign up
-                  </h2>
-                  <p className="text-sm" style={{ color: "#64748b" }}>
-                    We'll send a one-time code to your email.
-                  </p>
-                  <p className="text-xs mt-0.5" style={{ color: "#475569" }}>
-                    आपके ईमेल पर एक कोड भेजा जाएगा।
-                  </p>
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200"
+                    style={{
+                      background:
+                        activeTab === "signup"
+                          ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
+                          : "transparent",
+                      color: activeTab === "signup" ? "#fff" : "#64748b",
+                      boxShadow:
+                        activeTab === "signup"
+                          ? "0 2px 12px rgba(109,40,217,0.35)"
+                          : "none",
+                    }}
+                    onClick={() => switchTab("signup")}
+                    data-ocid="auth.tab"
+                  >
+                    Sign Up
+                  </button>
                 </div>
 
-                {/* Email form */}
-                <form onSubmit={handleSendOtp} className="flex flex-col gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <label
-                      htmlFor="auth-email"
-                      className="text-xs font-semibold uppercase tracking-wider"
-                      style={{ color: "#94a3b8", letterSpacing: "0.1em" }}
-                    >
-                      Email Address
-                    </label>
-                    <Input
-                      id="auth-email"
-                      type="email"
-                      inputMode="email"
-                      placeholder="you@example.com"
-                      value={email}
-                      onChange={(e) => {
-                        setEmail(e.target.value);
-                        setError("");
-                      }}
-                      required
-                      autoComplete="email"
-                      className="w-full h-12 rounded-2xl text-sm text-white placeholder:text-slate-600 border-0 px-4"
-                      style={{
-                        background: "rgba(255,255,255,0.06)",
-                        boxShadow:
-                          "0 0 0 1px rgba(255,255,255,0.08), inset 0 2px 4px rgba(0,0,0,0.3)",
-                        fontSize: "16px",
-                        outline: "none",
-                      }}
-                      data-ocid="auth.input"
-                    />
-                  </div>
-
-                  {error && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -4 }}
+                {/* ── Sign In form ──────────────────────────────────────────── */}
+                <AnimatePresence mode="wait">
+                  {activeTab === "signin" ? (
+                    <motion.form
+                      key="signin-form"
+                      initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="flex items-start gap-2.5 px-4 py-3 rounded-2xl text-sm"
-                      style={{
-                        background: "rgba(239,68,68,0.08)",
-                        border: "1px solid rgba(239,68,68,0.2)",
-                        color: "#fca5a5",
-                      }}
-                      data-ocid="auth.error_state"
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.2 }}
+                      onSubmit={handleSignIn}
+                      className="flex flex-col gap-4"
                     >
-                      <span className="mt-0.5 flex-shrink-0">⚠</span>
-                      {error}
-                    </motion.div>
-                  )}
+                      <div>
+                        <p
+                          className="text-sm mb-4"
+                          style={{ color: "#64748b" }}
+                        >
+                          Enter your email and password to continue.
+                        </p>
+                      </div>
 
-                  <Button
-                    type="submit"
-                    className="w-full rounded-2xl font-bold text-base text-white border-0 mt-1 min-h-[52px]"
-                    style={{
-                      height: "52px",
-                      background:
-                        "linear-gradient(135deg, #7c3aed 0%, #6d28d9 50%, #4f46e5 100%)",
-                      boxShadow:
-                        "0 4px 24px rgba(109,40,217,0.45), 0 1px 0 rgba(255,255,255,0.12) inset",
-                      fontSize: "15px",
-                      letterSpacing: "-0.01em",
-                    }}
-                    disabled={sendLoading}
-                    data-ocid="auth.submit_button"
-                  >
-                    {sendLoading ? (
-                      <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                    ) : null}
-                    {sendLoading ? "Sending code…" : "Send OTP"}
-                  </Button>
-                </form>
+                      {/* Email field */}
+                      <div className="flex flex-col gap-1.5">
+                        <label
+                          htmlFor="signin-email"
+                          className="text-xs font-semibold uppercase tracking-wider"
+                          style={{ color: "#94a3b8", letterSpacing: "0.1em" }}
+                        >
+                          Email Address
+                        </label>
+                        <Input
+                          id="signin-email"
+                          type="email"
+                          inputMode="email"
+                          placeholder="you@example.com"
+                          value={email}
+                          onChange={(e) => {
+                            setEmail(e.target.value);
+                            setError("");
+                          }}
+                          required
+                          autoComplete="email"
+                          className="w-full h-12 rounded-2xl text-sm text-white placeholder:text-slate-600 border-0 px-4"
+                          style={{
+                            background: "rgba(255,255,255,0.06)",
+                            boxShadow:
+                              "0 0 0 1px rgba(255,255,255,0.08), inset 0 2px 4px rgba(0,0,0,0.3)",
+                            fontSize: "16px",
+                            outline: "none",
+                          }}
+                          data-ocid="auth.email_input"
+                        />
+                      </div>
+
+                      {/* Password field */}
+                      <div className="flex flex-col gap-1.5">
+                        <label
+                          htmlFor="signin-password"
+                          className="text-xs font-semibold uppercase tracking-wider"
+                          style={{ color: "#94a3b8", letterSpacing: "0.1em" }}
+                        >
+                          Password
+                        </label>
+                        <div className="relative">
+                          <Input
+                            id="signin-password"
+                            type={showPassword ? "text" : "password"}
+                            placeholder="Your password"
+                            value={password}
+                            onChange={(e) => {
+                              setPassword(e.target.value);
+                              setError("");
+                            }}
+                            required
+                            autoComplete="current-password"
+                            className="w-full h-12 rounded-2xl text-sm text-white placeholder:text-slate-600 border-0 px-4 pr-12"
+                            style={{
+                              background: "rgba(255,255,255,0.06)",
+                              boxShadow:
+                                "0 0 0 1px rgba(255,255,255,0.08), inset 0 2px 4px rgba(0,0,0,0.3)",
+                              fontSize: "16px",
+                              outline: "none",
+                            }}
+                            data-ocid="auth.password_input"
+                          />
+                          <button
+                            type="button"
+                            className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1"
+                            style={{ color: "#64748b" }}
+                            onClick={() => setShowPassword((v) => !v)}
+                            tabIndex={-1}
+                          >
+                            {showPassword ? (
+                              <EyeOff className="w-4 h-4" />
+                            ) : (
+                              <Eye className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Error */}
+                      {error && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="flex items-start gap-2.5 px-4 py-3 rounded-2xl text-sm"
+                          style={{
+                            background: "rgba(239,68,68,0.08)",
+                            border: "1px solid rgba(239,68,68,0.2)",
+                            color: "#fca5a5",
+                          }}
+                          data-ocid="auth.error_state"
+                        >
+                          <span className="mt-0.5 flex-shrink-0">⚠</span>
+                          {error}
+                        </motion.div>
+                      )}
+
+                      <Button
+                        type="submit"
+                        className="w-full rounded-2xl font-bold text-base text-white border-0 mt-1 min-h-[52px]"
+                        style={{
+                          height: "52px",
+                          background:
+                            "linear-gradient(135deg, #7c3aed 0%, #6d28d9 50%, #4f46e5 100%)",
+                          boxShadow:
+                            "0 4px 24px rgba(109,40,217,0.45), 0 1px 0 rgba(255,255,255,0.12) inset",
+                          fontSize: "15px",
+                          letterSpacing: "-0.01em",
+                        }}
+                        disabled={submitLoading}
+                        data-ocid="auth.submit_button"
+                      >
+                        {submitLoading ? (
+                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                        ) : null}
+                        {submitLoading ? "Signing in…" : "Sign In"}
+                      </Button>
+
+                      <p
+                        className="text-center text-xs"
+                        style={{ color: "#334155" }}
+                      >
+                        Don't have an account?{" "}
+                        <button
+                          type="button"
+                          className="font-medium hover:opacity-80 transition-opacity"
+                          style={{ color: "#a78bfa" }}
+                          onClick={() => switchTab("signup")}
+                        >
+                          Sign up
+                        </button>
+                      </p>
+                    </motion.form>
+                  ) : (
+                    /* ── Sign Up form ──────────────────────────────────────── */
+                    <motion.form
+                      key="signup-form"
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.2 }}
+                      onSubmit={handleSignUp}
+                      className="flex flex-col gap-4"
+                    >
+                      <div>
+                        <p
+                          className="text-sm mb-4"
+                          style={{ color: "#64748b" }}
+                        >
+                          Create your account. We'll send a verification code.
+                        </p>
+                      </div>
+
+                      {/* Email field */}
+                      <div className="flex flex-col gap-1.5">
+                        <label
+                          htmlFor="signup-email"
+                          className="text-xs font-semibold uppercase tracking-wider"
+                          style={{ color: "#94a3b8", letterSpacing: "0.1em" }}
+                        >
+                          Email Address
+                        </label>
+                        <Input
+                          id="signup-email"
+                          type="email"
+                          inputMode="email"
+                          placeholder="you@example.com"
+                          value={email}
+                          onChange={(e) => {
+                            setEmail(e.target.value);
+                            setError("");
+                          }}
+                          required
+                          autoComplete="email"
+                          className="w-full h-12 rounded-2xl text-sm text-white placeholder:text-slate-600 border-0 px-4"
+                          style={{
+                            background: "rgba(255,255,255,0.06)",
+                            boxShadow:
+                              "0 0 0 1px rgba(255,255,255,0.08), inset 0 2px 4px rgba(0,0,0,0.3)",
+                            fontSize: "16px",
+                            outline: "none",
+                          }}
+                          data-ocid="auth.email_input"
+                        />
+                      </div>
+
+                      {/* Password field */}
+                      <div className="flex flex-col gap-1.5">
+                        <label
+                          htmlFor="signup-password"
+                          className="text-xs font-semibold uppercase tracking-wider"
+                          style={{ color: "#94a3b8", letterSpacing: "0.1em" }}
+                        >
+                          Password
+                        </label>
+                        <div className="relative">
+                          <Input
+                            id="signup-password"
+                            type={showPassword ? "text" : "password"}
+                            placeholder="Min. 6 characters"
+                            value={password}
+                            onChange={(e) => {
+                              setPassword(e.target.value);
+                              setError("");
+                            }}
+                            required
+                            autoComplete="new-password"
+                            minLength={6}
+                            className="w-full h-12 rounded-2xl text-sm text-white placeholder:text-slate-600 border-0 px-4 pr-12"
+                            style={{
+                              background: "rgba(255,255,255,0.06)",
+                              boxShadow:
+                                "0 0 0 1px rgba(255,255,255,0.08), inset 0 2px 4px rgba(0,0,0,0.3)",
+                              fontSize: "16px",
+                              outline: "none",
+                            }}
+                            data-ocid="auth.password_input"
+                          />
+                          <button
+                            type="button"
+                            className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1"
+                            style={{ color: "#64748b" }}
+                            onClick={() => setShowPassword((v) => !v)}
+                            tabIndex={-1}
+                          >
+                            {showPassword ? (
+                              <EyeOff className="w-4 h-4" />
+                            ) : (
+                              <Eye className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-xs" style={{ color: "#475569" }}>
+                          At least 6 characters
+                        </p>
+                      </div>
+
+                      {/* Error */}
+                      {error && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="flex items-start gap-2.5 px-4 py-3 rounded-2xl text-sm"
+                          style={{
+                            background: "rgba(239,68,68,0.08)",
+                            border: "1px solid rgba(239,68,68,0.2)",
+                            color: "#fca5a5",
+                          }}
+                          data-ocid="auth.error_state"
+                        >
+                          <span className="mt-0.5 flex-shrink-0">⚠</span>
+                          {error}
+                        </motion.div>
+                      )}
+
+                      <Button
+                        type="submit"
+                        className="w-full rounded-2xl font-bold text-base text-white border-0 mt-1 min-h-[52px]"
+                        style={{
+                          height: "52px",
+                          background:
+                            "linear-gradient(135deg, #7c3aed 0%, #6d28d9 50%, #4f46e5 100%)",
+                          boxShadow:
+                            "0 4px 24px rgba(109,40,217,0.45), 0 1px 0 rgba(255,255,255,0.12) inset",
+                          fontSize: "15px",
+                          letterSpacing: "-0.01em",
+                        }}
+                        disabled={submitLoading}
+                        data-ocid="auth.submit_button"
+                      >
+                        {submitLoading ? (
+                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                        ) : null}
+                        {submitLoading ? "Creating account…" : "Create Account"}
+                      </Button>
+
+                      <p
+                        className="text-center text-xs"
+                        style={{ color: "#334155" }}
+                      >
+                        Already have an account?{" "}
+                        <button
+                          type="button"
+                          className="font-medium hover:opacity-80 transition-opacity"
+                          style={{ color: "#a78bfa" }}
+                          onClick={() => switchTab("signin")}
+                        >
+                          Sign in
+                        </button>
+                      </p>
+                    </motion.form>
+                  )}
+                </AnimatePresence>
 
                 {/* Footer */}
                 <p
@@ -318,6 +681,7 @@ export default function AuthPage() {
                 </p>
               </motion.div>
             ) : (
+              /* ── OTP screen ──────────────────────────────────────────────── */
               <motion.div
                 key="otp-screen"
                 initial={{ opacity: 0, x: 16 }}
@@ -348,7 +712,7 @@ export default function AuthPage() {
                       Check your inbox
                     </h2>
                     <p className="text-sm" style={{ color: "#94a3b8" }}>
-                      We sent a 6-digit code to{" "}
+                      We sent a 6-digit verification code to{" "}
                       <span className="text-violet-400 font-medium">
                         {email}
                       </span>
@@ -438,7 +802,7 @@ export default function AuthPage() {
                     type="button"
                     className="text-sm min-h-[44px] px-2"
                     style={{ color: "#475569" }}
-                    onClick={backToEmail}
+                    onClick={backToAuth}
                     data-ocid="auth.back_link"
                   >
                     ← Back

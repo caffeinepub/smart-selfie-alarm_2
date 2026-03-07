@@ -7,15 +7,15 @@ import {
   useState,
 } from "react";
 import {
-  type UserSubscription,
-  ensureUserRow,
+  type SubscriptionRow,
+  ensureSubscriptionRow,
   getUserSubscription,
   isSubscriptionActive,
 } from "../lib/subscriptionService";
 import { useAuthContext } from "./AuthContext";
 
 interface SubscriptionContextType {
-  subscription: UserSubscription | null;
+  subscription: SubscriptionRow | null;
   isActive: boolean;
   trialUsed: boolean;
   loading: boolean;
@@ -26,7 +26,7 @@ const SubscriptionContext = createContext<SubscriptionContextType | null>(null);
 
 export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const { user } = useAuthContext();
-  const [subscription, setSubscription] = useState<UserSubscription | null>(
+  const [subscription, setSubscription] = useState<SubscriptionRow | null>(
     null,
   );
   const [loading, setLoading] = useState(true);
@@ -40,21 +40,21 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     try {
       setLoading(true);
 
-      // Ensure row exists (safety net on top of DB trigger)
-      await ensureUserRow(user.id, user.email ?? "");
+      // Safety net: ensure a bare row exists
+      await ensureSubscriptionRow(user.id);
 
       const sub = await getUserSubscription(user.id);
-      console.log("[SubscriptionContext] Subscription loaded:", {
-        planType: sub?.planType,
-        status: sub?.subscriptionStatus,
-        isPremium: sub?.isPremium,
-        trialUsed: sub?.trialUsed,
-        expiresAt: sub?.premiumExpiresAt?.toISOString(),
+      console.log("[SubscriptionContext] Loaded:", {
+        plan: sub?.plan,
+        status: sub?.status,
+        trial_used: sub?.trial_used,
+        trial_end: sub?.trial_end,
+        expires_at: sub?.expires_at,
         isActive: isSubscriptionActive(sub),
       });
       setSubscription(sub);
     } catch (err) {
-      console.error("[SubscriptionContext] Failed to fetch subscription:", err);
+      console.error("[SubscriptionContext] Failed to fetch:", err);
       setSubscription(null);
     } finally {
       setLoading(false);
@@ -66,7 +66,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   }, [fetchSubscription]);
 
   const isActive = isSubscriptionActive(subscription);
-  const trialUsed = subscription?.trialUsed ?? false;
+  const trialUsed = subscription?.trial_used ?? false;
 
   return (
     <SubscriptionContext.Provider

@@ -12,43 +12,116 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  // OTP flow (for email verification after signup or OTP-only login)
   sendOtp: (email: string) => Promise<void>;
   verifyOtp: (email: string, token: string) => Promise<void>;
+  // Password flow
+  signUpWithPassword: (
+    email: string,
+    password: string,
+  ) => Promise<{ needsOtp: boolean }>;
+  signInWithPassword: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 /**
- * Ensures a row exists in public.users for the given authenticated user.
- * Called on every SIGNED_IN event so OTP users are covered.
- * Uses upsert with ignoreDuplicates so it is safe to call repeatedly.
+ * Ensures a bare row exists in public.users (id + email only).
+ * Also ensures a subscriptions row exists with plan="free", status="free", trial_used=false.
+ * Uses NEW schema column names. Does NOT grant premium access.
  */
 async function ensureUserRow(user: User): Promise<void> {
-  const now = new Date();
-  const trialExpiry = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const { error } = await supabase.from("users").upsert(
+  // 1. Bare users row
+  const { error: userError } = await supabase.from("users").upsert(
     {
       id: user.id,
       email: user.email ?? "",
-      is_premium: true, // trial users get premium access
-      plan_type: "trial",
-      subscription_status: "trial",
-      subscription_start_date: now.toISOString(),
-      subscription_expiry_date: trialExpiry.toISOString(),
-      auto_renew: false,
     },
     { onConflict: "id", ignoreDuplicates: true },
   );
-  if (error) {
+  if (userError) {
     console.error(
-      "[AuthContext] ensureUserRow failed:",
-      error.message,
-      error.code,
+      "[AuthContext] ensureUserRow (users) failed:",
+      userError.message,
     );
-  } else {
-    console.log("[AuthContext] ensureUserRow: row ensured for", user.id);
   }
+
+  // 2. Bare subscriptions row — only if none exists
+  const { data: existing } = await supabase
+    .from("subscriptions")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!existing) {
+    const { error: subError } = await supabase.from("subscriptions").insert({
+      user_id: user.id,
+      plan: "free", // NEW: was plan_type
+      status: "free",
+      trial_used: false,
+    });
+    if (subError && subError.code !== "23505") {
+      console.error(
+        "[AuthContext] ensureUserRow (subscriptions) failed:",
+        subError.message,
+      );
+    } else {
+      console.log("[AuthContext] subscriptions row created for", user.id);
+    }
+  }
+}
+
+/**
+ * Map error messages to typed auth error codes.
+ */
+function classifyAuthError(
+  message: string,
+  fallback: string,
+): Error & { code: string } {
+  const msg = message.toLowerCase();
+  const e = new Error(message) as Error & { code: string };
+
+  if (
+    msg.includes("already registered") ||
+    msg.includes("already exists") ||
+    msg.includes("user already")
+  ) {
+    e.code = "auth/email-in-use";
+  } else if (
+    msg.includes("rate limit") ||
+    msg.includes("too many") ||
+    msg.includes("email rate limit")
+  ) {
+    e.code = "auth/too-many-requests";
+  } else if (
+    msg.includes("invalid login") ||
+    msg.includes("invalid credentials") ||
+    msg.includes("wrong password")
+  ) {
+    e.code = "auth/wrong-password";
+  } else if (
+    msg.includes("email not confirmed") ||
+    msg.includes("email_not_confirmed")
+  ) {
+    e.code = "auth/email-not-verified";
+  } else if (
+    msg.includes("user not found") ||
+    msg.includes("no user") ||
+    msg.includes("invalid email")
+  ) {
+    e.code = "auth/user-not-found";
+  } else if (
+    msg.includes("invalid") ||
+    msg.includes("expired") ||
+    msg.includes("token")
+  ) {
+    e.code = "auth/invalid-otp";
+  } else {
+    e.code = fallback;
+  }
+
+  return e;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -80,25 +153,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  /**
+   * Send a one-time password (OTP) to an email.
+   * Used for email verification after signup and OTP-only login.
+   */
   const sendOtp = async (email: string) => {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: { shouldCreateUser: true },
     });
     if (error) {
-      const e = new Error(error.message) as Error & { code: string };
-      if (
-        error.message.toLowerCase().includes("rate limit") ||
-        error.message.toLowerCase().includes("too many")
-      ) {
-        e.code = "auth/too-many-requests";
-      } else {
-        e.code = "auth/otp-send-failed";
-      }
-      throw e;
+      throw classifyAuthError(error.message, "auth/otp-send-failed");
     }
   };
 
+  /**
+   * Verify a 6-digit OTP sent to the user's email.
+   */
   const verifyOtp = async (email: string, token: string) => {
     const { error } = await supabase.auth.verifyOtp({
       email,
@@ -106,22 +177,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       type: "email",
     });
     if (error) {
-      const e = new Error(error.message) as Error & { code: string };
-      if (
-        error.message.toLowerCase().includes("invalid") ||
-        error.message.toLowerCase().includes("expired") ||
-        error.message.toLowerCase().includes("token")
-      ) {
-        e.code = "auth/invalid-otp";
-      } else if (
-        error.message.toLowerCase().includes("rate limit") ||
-        error.message.toLowerCase().includes("too many")
-      ) {
-        e.code = "auth/too-many-requests";
-      } else {
-        e.code = "auth/otp-verify-failed";
-      }
-      throw e;
+      throw classifyAuthError(error.message, "auth/otp-verify-failed");
+    }
+  };
+
+  /**
+   * Sign up with email + password.
+   * Returns { needsOtp: true } if email verification is required.
+   * Returns { needsOtp: false } if account is already confirmed.
+   */
+  const signUpWithPassword = async (
+    email: string,
+    password: string,
+  ): Promise<{ needsOtp: boolean }> => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: undefined,
+      },
+    });
+
+    if (error) {
+      throw classifyAuthError(error.message, "auth/signup-failed");
+    }
+
+    // If email_confirmed_at is null, the user needs to verify their email
+    const needsOtp = !data.user?.email_confirmed_at;
+    return { needsOtp };
+  };
+
+  /**
+   * Sign in with email + password.
+   * Throws typed errors for wrong password, unverified email, etc.
+   */
+  const signInWithPassword = async (
+    email: string,
+    password: string,
+  ): Promise<void> => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      throw classifyAuthError(error.message, "auth/signin-failed");
     }
   };
 
@@ -137,6 +237,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         sendOtp,
         verifyOtp,
+        signUpWithPassword,
+        signInWithPassword,
         logout,
       }}
     >
