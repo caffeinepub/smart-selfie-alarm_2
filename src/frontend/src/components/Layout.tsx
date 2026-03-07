@@ -2,16 +2,14 @@ import { cn } from "@/lib/utils";
 import {
   AlarmClock,
   Bell,
-  Calculator,
   Crown,
   FileText,
+  Home,
   Info,
-  LayoutDashboard,
   Mail,
   ReceiptText,
   Settings,
   Shield,
-  Wrench,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
@@ -21,10 +19,9 @@ interface LayoutProps {
 }
 
 const sidebarNavItems = [
-  { to: "/home", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/home", label: "Home", icon: Home },
   { to: "/dashboard", label: "Alarms", icon: Bell },
-  { to: "/tools", label: "Tools", icon: Calculator },
-  { to: "/subscription", label: "Subscription", icon: Crown },
+  { to: "/subscription", label: "Premium", icon: Crown },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/about", label: "About", icon: Info },
   { to: "/contact", label: "Contact", icon: Mail },
@@ -34,9 +31,8 @@ const sidebarNavItems = [
 ];
 
 const bottomNavItems = [
-  { to: "/home", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/home", label: "Home", icon: Home },
   { to: "/dashboard", label: "Alarms", icon: Bell },
-  { to: "/tools", label: "Tools", icon: Wrench },
   { to: "/subscription", label: "Premium", icon: Crown },
   { to: "/settings", label: "Settings", icon: Settings },
 ];

@@ -382,7 +382,7 @@ export default function HomePage() {
             },
             {
               label: "Settings",
-              sub: "Account & sound",
+              sub: "Account & preferences",
               to: "/settings",
               ocid: "home.settings_button",
             },
@@ -490,34 +490,22 @@ export default function HomePage() {
           <div className="space-y-2.5">
             {[
               {
-                name: "7 Day Trial",
+                name: "Free Trial",
                 price: "₹1",
-                period: "one-time",
+                period: "7 days",
+                sub: "Then ₹29/month auto-renew",
                 highlight: false,
-                badge: "",
+                badge: "Start Here",
               },
               {
                 name: "Monthly Plan",
                 price: "₹29",
                 period: "per month",
+                sub: "Cancel anytime",
                 highlight: true,
                 badge: "",
               },
-              {
-                name: "6 Month Plan",
-                price: "₹150",
-                period: "6 months",
-                highlight: false,
-                badge: "≈14% OFF",
-              },
-              {
-                name: "Yearly Plan",
-                price: "₹280",
-                period: "per year",
-                highlight: false,
-                badge: "Best Value",
-              },
-            ].map(({ name, price, period, highlight, badge }) => (
+            ].map(({ name, price, period, sub, highlight, badge }) => (
               <div
                 key={name}
                 className="flex items-center justify-between rounded-[16px] px-4 py-3"
@@ -538,13 +526,24 @@ export default function HomePage() {
                     {name}
                   </p>
                   <p className="text-xs mt-0.5" style={{ color: "#64748b" }}>
-                    {period}
+                    {sub}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col items-end gap-1">
+                  <div className="flex items-baseline gap-1">
+                    <p
+                      className="text-base font-bold"
+                      style={{ color: highlight ? "#a78bfa" : "#e2e8f0" }}
+                    >
+                      {price}
+                    </p>
+                    <span className="text-xs" style={{ color: "#475569" }}>
+                      {period}
+                    </span>
+                  </div>
                   {badge && (
                     <span
-                      className="px-2 py-0.5 rounded-full text-xs font-bold"
+                      className="px-2 py-0.5 rounded-full text-[10px] font-bold"
                       style={{
                         background: "rgba(16,185,129,0.15)",
                         color: "#10b981",
@@ -554,12 +553,6 @@ export default function HomePage() {
                       {badge}
                     </span>
                   )}
-                  <p
-                    className="text-base font-bold"
-                    style={{ color: highlight ? "#a78bfa" : "#e2e8f0" }}
-                  >
-                    {price}
-                  </p>
                 </div>
               </div>
             ))}

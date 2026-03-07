@@ -8,7 +8,7 @@ import {
 } from "react";
 import {
   type UserSubscription,
-  createTrialSubscription,
+  ensureUserRow,
   getUserSubscription,
   isSubscriptionActive,
 } from "../lib/subscriptionService";
@@ -17,6 +17,7 @@ import { useAuthContext } from "./AuthContext";
 interface SubscriptionContextType {
   subscription: UserSubscription | null;
   isActive: boolean;
+  trialUsed: boolean;
   loading: boolean;
   refetch: () => Promise<void>;
 }
@@ -38,14 +39,22 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     }
     try {
       setLoading(true);
-      let sub = await getUserSubscription(user.id);
-      // If no subscription exists, auto-create trial for new user
-      if (!sub) {
-        sub = await createTrialSubscription(user.id, user.email ?? "");
-      }
+
+      // Ensure row exists (safety net on top of DB trigger)
+      await ensureUserRow(user.id, user.email ?? "");
+
+      const sub = await getUserSubscription(user.id);
+      console.log("[SubscriptionContext] Subscription loaded:", {
+        planType: sub?.planType,
+        status: sub?.subscriptionStatus,
+        isPremium: sub?.isPremium,
+        trialUsed: sub?.trialUsed,
+        expiresAt: sub?.premiumExpiresAt?.toISOString(),
+        isActive: isSubscriptionActive(sub),
+      });
       setSubscription(sub);
     } catch (err) {
-      console.error("Failed to fetch subscription:", err);
+      console.error("[SubscriptionContext] Failed to fetch subscription:", err);
       setSubscription(null);
     } finally {
       setLoading(false);
@@ -57,10 +66,17 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   }, [fetchSubscription]);
 
   const isActive = isSubscriptionActive(subscription);
+  const trialUsed = subscription?.trialUsed ?? false;
 
   return (
     <SubscriptionContext.Provider
-      value={{ subscription, isActive, loading, refetch: fetchSubscription }}
+      value={{
+        subscription,
+        isActive,
+        trialUsed,
+        loading,
+        refetch: fetchSubscription,
+      }}
     >
       {children}
     </SubscriptionContext.Provider>

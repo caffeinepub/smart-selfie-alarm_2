@@ -1,20 +1,24 @@
 import { Toaster } from "@/components/ui/sonner";
+import { Crown, Lock } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   BrowserRouter,
   Navigate,
   Route,
   Routes,
   useLocation,
+  useNavigate,
 } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
 import { LoadingSpinner } from "./components/LoadingSpinner";
 import { AlarmProvider } from "./context/AlarmContext";
 import { AuthProvider } from "./context/AuthContext";
-import { SubscriptionProvider } from "./context/SubscriptionContext";
-import { useSubscriptionContext } from "./context/SubscriptionContext";
+import {
+  SubscriptionProvider,
+  useSubscriptionContext,
+} from "./context/SubscriptionContext";
 import { useAuth } from "./hooks/useAuth";
 
 import AboutPage from "./pages/AboutPage";
@@ -27,51 +31,152 @@ import HomePage from "./pages/HomePage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import RefundPolicyPage from "./pages/RefundPolicyPage";
 import SettingsPage from "./pages/SettingsPage";
-import StopwatchPage from "./pages/StopwatchPage";
 import SubscriptionPage from "./pages/SubscriptionPage";
 import TermsAndConditionsPage from "./pages/TermsAndConditionsPage";
-import TimerPage from "./pages/TimerPage";
-import ToolsPage from "./pages/ToolsPage";
 import VerificationPage from "./pages/VerificationPage";
+
+// ─── Paywall popup ────────────────────────────────────────────────────────────
+
+function PaywallModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center p-4 pb-8"
+      style={{ background: "rgba(0,0,0,0.70)", backdropFilter: "blur(6px)" }}
+      onClick={onClose}
+      onKeyDown={(e) => e.key === "Escape" && onClose()}
+      role="presentation"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 40 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 40 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+        className="w-full max-w-sm rounded-[26px] p-6 text-center"
+        style={{
+          background: "linear-gradient(160deg, #12121e 0%, #0d0d18 100%)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.8)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+        data-ocid="subscription.paywall_modal"
+      >
+        {/* Icon */}
+        <div
+          className="w-14 h-14 rounded-[18px] flex items-center justify-center mx-auto mb-4"
+          style={{
+            background: "linear-gradient(135deg, #7c3aed, #4f46e5)",
+            boxShadow: "0 6px 24px rgba(124,58,237,0.40)",
+          }}
+        >
+          <Lock className="w-7 h-7 text-white" />
+        </div>
+
+        <h2
+          className="text-lg font-bold text-white mb-1"
+          style={{ letterSpacing: "-0.02em" }}
+        >
+          Select a plan to continue
+        </h2>
+        <p className="text-sm mb-5" style={{ color: "#64748b" }}>
+          This feature requires an active subscription.
+        </p>
+
+        {/* CTA */}
+        <button
+          type="button"
+          className="w-full h-12 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2 mb-3"
+          style={{
+            background: "linear-gradient(135deg, #f59e0b, #d97706)",
+            boxShadow: "0 4px 20px rgba(245,158,11,0.35)",
+          }}
+          onClick={() => {
+            onClose();
+            navigate("/subscription");
+          }}
+          data-ocid="subscription.paywall_cta_button"
+        >
+          <Crown className="w-4 h-4" />
+          View Plans
+        </button>
+
+        <button
+          type="button"
+          className="w-full h-10 rounded-xl text-sm font-medium"
+          style={{ color: "#475569" }}
+          onClick={onClose}
+          data-ocid="subscription.paywall_dismiss_button"
+        >
+          Not now
+        </button>
+      </motion.div>
+    </div>
+  );
+}
+
+// ─── Route guards ─────────────────────────────────────────────────────────────
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
-
-  if (loading) {
-    return <LoadingSpinner fullScreen />;
-  }
-
-  if (!user) {
-    return <Navigate to="/" replace />;
-  }
-
+  if (loading) return <LoadingSpinner fullScreen />;
+  if (!user) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
 /**
- * SubscriptionGuard — wraps authenticated routes that require an active plan.
- * If the subscription is still loading we show a spinner.
- * If there is no active subscription the user is redirected to /subscription.
+ * SubscriptionGuard — shows a paywall popup instead of silently redirecting.
+ * The user stays on the current page and sees: "Select a plan to continue".
  */
 function SubscriptionGuard({ children }: { children: ReactNode }) {
   const { isActive, loading } = useSubscriptionContext();
+  const navigate = useNavigate();
+  const [showPaywall, setShowPaywall] = useState(false);
 
-  if (loading) {
-    return <LoadingSpinner fullScreen />;
-  }
+  useEffect(() => {
+    if (!loading && !isActive) {
+      setShowPaywall(true);
+    } else {
+      setShowPaywall(false);
+    }
+  }, [isActive, loading]);
+
+  if (loading) return <LoadingSpinner fullScreen />;
 
   if (!isActive) {
-    return <Navigate to="/subscription" replace />;
+    return (
+      <>
+        {/* Blurred locked content preview */}
+        <div className="pointer-events-none opacity-20 blur-sm select-none">
+          {children}
+        </div>
+        <AnimatePresence>
+          {showPaywall && (
+            <PaywallModal
+              open={showPaywall}
+              onClose={() => navigate("/subscription")}
+            />
+          )}
+        </AnimatePresence>
+      </>
+    );
   }
 
   return <>{children}</>;
 }
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
 
 function AppRoutes() {
   const { user, loading } = useAuth();
   const location = useLocation();
 
-  // Update document title on route change
   useEffect(() => {
     const titles: Record<string, string> = {
       "/": "Smart Selfie Alarm — Sign In",
@@ -83,20 +188,15 @@ function AppRoutes() {
       "/settings": "Settings — Smart Selfie Alarm",
       "/about": "About — Smart Selfie Alarm",
       "/contact": "Contact — Smart Selfie Alarm",
-      "/timer": "Timer — Smart Selfie Alarm",
-      "/stopwatch": "Stopwatch — Smart Selfie Alarm",
-      "/tools": "Tools — Smart Selfie Alarm",
       "/privacy": "Privacy Policy — Smart Selfie Alarm",
       "/terms": "Terms & Conditions — Smart Selfie Alarm",
       "/refund": "Refund Policy — Smart Selfie Alarm",
-      "/subscription": "Subscription — Smart Selfie Alarm",
+      "/subscription": "Premium — Smart Selfie Alarm",
     };
     document.title = titles[location.pathname] ?? "Smart Selfie Alarm";
   }, [location.pathname]);
 
-  if (loading) {
-    return <LoadingSpinner fullScreen />;
-  }
+  if (loading) return <LoadingSpinner fullScreen />;
 
   return (
     <Layout>
@@ -110,7 +210,7 @@ function AppRoutes() {
           className="h-full"
         >
           <Routes location={location}>
-            {/* Public routes */}
+            {/* Public */}
             <Route
               path="/"
               element={user ? <Navigate to="/home" replace /> : <AuthPage />}
@@ -121,8 +221,7 @@ function AppRoutes() {
             <Route path="/terms" element={<TermsAndConditionsPage />} />
             <Route path="/refund" element={<RefundPolicyPage />} />
 
-            {/* Subscription page — requires login but NOT an active subscription
-                (user lands here to subscribe) */}
+            {/* Subscription — requires login, NOT an active sub */}
             <Route
               path="/subscription"
               element={
@@ -132,7 +231,7 @@ function AppRoutes() {
               }
             />
 
-            {/* Protected + subscription-gated routes */}
+            {/* Premium-gated routes */}
             <Route
               path="/home"
               element={
@@ -203,38 +302,7 @@ function AppRoutes() {
                 </ProtectedRoute>
               }
             />
-            <Route
-              path="/timer"
-              element={
-                <ProtectedRoute>
-                  <SubscriptionGuard>
-                    <TimerPage />
-                  </SubscriptionGuard>
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/stopwatch"
-              element={
-                <ProtectedRoute>
-                  <SubscriptionGuard>
-                    <StopwatchPage />
-                  </SubscriptionGuard>
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/tools"
-              element={
-                <ProtectedRoute>
-                  <SubscriptionGuard>
-                    <ToolsPage />
-                  </SubscriptionGuard>
-                </ProtectedRoute>
-              }
-            />
 
-            {/* Catch all */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </motion.div>
@@ -243,12 +311,14 @@ function AppRoutes() {
   );
 }
 
+// ─── App root ─────────────────────────────────────────────────────────────────
+
 function AppWithProviders() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <SubscriptionProviderWrapper>
-          <AlarmProviderWrapper>
+        <SubscriptionProvider>
+          <AlarmProvider>
             <AppRoutes />
             <Toaster
               position="top-center"
@@ -262,21 +332,11 @@ function AppWithProviders() {
                 },
               }}
             />
-          </AlarmProviderWrapper>
-        </SubscriptionProviderWrapper>
+          </AlarmProvider>
+        </SubscriptionProvider>
       </AuthProvider>
     </BrowserRouter>
   );
-}
-
-// SubscriptionProvider must be inside BrowserRouter and AuthProvider
-function SubscriptionProviderWrapper({ children }: { children: ReactNode }) {
-  return <SubscriptionProvider>{children}</SubscriptionProvider>;
-}
-
-// AlarmProvider needs to be inside BrowserRouter for useNavigate
-function AlarmProviderWrapper({ children }: { children: ReactNode }) {
-  return <AlarmProvider>{children}</AlarmProvider>;
 }
 
 export default AppWithProviders;

@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -25,7 +24,6 @@ import {
   Music,
   Settings,
   Sun,
-  User,
   Volume2,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -69,31 +67,15 @@ function loadSettings() {
 
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const { user, logout, updateDisplayName } = useAuth();
+  const { user, logout } = useAuth();
   const [settings, setSettings] = useState(loadSettings);
   const [saving, setSaving] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [displayName, setDisplayName] = useState(
-    (user?.user_metadata?.display_name as string | undefined) ??
-      (user?.user_metadata?.full_name as string | undefined) ??
-      user?.email?.split("@")[0] ??
-      "",
-  );
-  const [savingName, setSavingName] = useState(false);
 
   useEffect(() => {
     const loaded = loadSettings();
     setSettings(loaded);
   }, []);
-
-  useEffect(() => {
-    setDisplayName(
-      (user?.user_metadata?.display_name as string | undefined) ??
-        (user?.user_metadata?.full_name as string | undefined) ??
-        user?.email?.split("@")[0] ??
-        "",
-    );
-  }, [user]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -116,22 +98,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSaveName = async () => {
-    if (!displayName.trim()) {
-      toast.error("Display name cannot be empty");
-      return;
-    }
-    setSavingName(true);
-    try {
-      await updateDisplayName(displayName.trim());
-      toast.success("Display name updated");
-    } catch {
-      toast.error("Failed to update display name");
-    } finally {
-      setSavingName(false);
-    }
-  };
-
   const handleLogout = async () => {
     setLoggingOut(true);
     try {
@@ -150,11 +116,7 @@ export default function SettingsPage() {
     localStorage.setItem("theme", newTheme);
   };
 
-  const currentDisplayName =
-    (user?.user_metadata?.display_name as string | undefined) ??
-    (user?.user_metadata?.full_name as string | undefined) ??
-    user?.email?.split("@")[0] ??
-    "User";
+  const currentDisplayName = user?.email?.split("@")[0] ?? "User";
 
   return (
     <div className="min-h-full" style={{ backgroundColor: "#0a0a0f" }}>
@@ -183,7 +145,7 @@ export default function SettingsPage() {
           >
             Account
           </p>
-          <div className="glass-card p-5 space-y-4">
+          <div className="glass-card p-5">
             {/* Avatar + info */}
             <div
               className="flex items-center gap-3 p-3 rounded-xl"
@@ -206,40 +168,6 @@ export default function SettingsPage() {
                 <p className="text-xs truncate" style={{ color: "#64748b" }}>
                   {user?.email}
                 </p>
-              </div>
-            </div>
-
-            {/* Display name edit */}
-            <div className="space-y-2">
-              <label
-                htmlFor="display-name-input"
-                className="text-sm font-medium flex items-center gap-1.5"
-                style={{ color: "#e2e8f0" }}
-              >
-                <User className="w-3.5 h-3.5" style={{ color: "#7c3aed" }} />
-                Display Name
-              </label>
-              <div className="flex gap-2">
-                <Input
-                  id="display-name-input"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Enter display name"
-                  className="rounded-xl border-white/10 bg-white/5 text-white placeholder:text-slate-500 focus:border-violet-500 flex-1"
-                  data-ocid="settings.name_input"
-                />
-                <Button
-                  className="btn-neon rounded-xl px-4 shrink-0"
-                  onClick={handleSaveName}
-                  disabled={savingName}
-                  data-ocid="settings.name_save_button"
-                >
-                  {savingName ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    "Save"
-                  )}
-                </Button>
               </div>
             </div>
           </div>

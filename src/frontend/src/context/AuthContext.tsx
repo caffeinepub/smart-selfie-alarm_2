@@ -12,16 +12,44 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string) => Promise<void>;
+  sendOtp: (email: string) => Promise<void>;
+  verifyOtp: (email: string, token: string) => Promise<void>;
   logout: () => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
-  updateDisplayName: (name: string) => Promise<void>;
-  resendVerificationEmail: () => Promise<void>;
-  sendPasswordReset: (email: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
+
+/**
+ * Ensures a row exists in public.users for the given authenticated user.
+ * Called on every SIGNED_IN event so OTP users are covered.
+ * Uses upsert with ignoreDuplicates so it is safe to call repeatedly.
+ */
+async function ensureUserRow(user: User): Promise<void> {
+  const now = new Date();
+  const trialExpiry = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const { error } = await supabase.from("users").upsert(
+    {
+      id: user.id,
+      email: user.email ?? "",
+      is_premium: true, // trial users get premium access
+      plan_type: "trial",
+      subscription_status: "trial",
+      subscription_start_date: now.toISOString(),
+      subscription_expiry_date: trialExpiry.toISOString(),
+      auto_renew: false,
+    },
+    { onConflict: "id", ignoreDuplicates: true },
+  );
+  if (error) {
+    console.error(
+      "[AuthContext] ensureUserRow failed:",
+      error.message,
+      error.code,
+    );
+  } else {
+    console.log("[AuthContext] ensureUserRow: row ensured for", user.id);
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -36,100 +64,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
 
-    // Listen for auth changes
+    // Listen for auth changes — auto-create user row on every SIGNED_IN
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
+    } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       setUser(s?.user ?? null);
       setLoading(false);
+      // Ensure the public.users row exists for new and returning users
+      if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && s?.user) {
+        ensureUserRow(s.user);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
+  const sendOtp = async (email: string) => {
+    const { error } = await supabase.auth.signInWithOtp({
       email,
-      password,
+      options: { shouldCreateUser: true },
     });
     if (error) {
       const e = new Error(error.message) as Error & { code: string };
-      e.code = mapSupabaseErrorCode(error.message);
-      throw e;
-    }
-    // Check email confirmed
-    if (data.user && !data.user.email_confirmed_at) {
-      await supabase.auth.signOut();
-      const e = new Error("auth/email-not-verified") as Error & {
-        code: string;
-      };
-      e.code = "auth/email-not-verified";
+      if (
+        error.message.toLowerCase().includes("rate limit") ||
+        error.message.toLowerCase().includes("too many")
+      ) {
+        e.code = "auth/too-many-requests";
+      } else {
+        e.code = "auth/otp-send-failed";
+      }
       throw e;
     }
   };
 
-  const signup = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({
+  const verifyOtp = async (email: string, token: string) => {
+    const { error } = await supabase.auth.verifyOtp({
       email,
-      password,
-      options: {
-        emailRedirectTo: window.location.origin,
-      },
+      token,
+      type: "email",
     });
     if (error) {
       const e = new Error(error.message) as Error & { code: string };
-      e.code = mapSupabaseErrorCode(error.message);
+      if (
+        error.message.toLowerCase().includes("invalid") ||
+        error.message.toLowerCase().includes("expired") ||
+        error.message.toLowerCase().includes("token")
+      ) {
+        e.code = "auth/invalid-otp";
+      } else if (
+        error.message.toLowerCase().includes("rate limit") ||
+        error.message.toLowerCase().includes("too many")
+      ) {
+        e.code = "auth/too-many-requests";
+      } else {
+        e.code = "auth/otp-verify-failed";
+      }
       throw e;
     }
-    // Supabase sends verification email automatically; sign out pending users
-    await supabase.auth.signOut();
   };
 
   const logout = async () => {
     await supabase.auth.signOut();
-  };
-
-  const signInWithGoogle = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: window.location.origin,
-        queryParams: { prompt: "select_account" },
-      },
-    });
-    if (error) {
-      const e = new Error(error.message) as Error & { code: string };
-      e.code = "auth/google-failed";
-      throw e;
-    }
-    // signInWithOAuth triggers a redirect — no await needed beyond this point
-  };
-
-  const updateDisplayName = async (name: string) => {
-    const { error } = await supabase.auth.updateUser({
-      data: { full_name: name, display_name: name },
-    });
-    if (error) throw new Error(error.message);
-    // Refresh user
-    const { data } = await supabase.auth.getUser();
-    setUser(data.user);
-  };
-
-  const resendVerificationEmail = async () => {
-    if (!user?.email) throw new Error("Not signed in");
-    const { error } = await supabase.auth.resend({
-      type: "signup",
-      email: user.email,
-    });
-    if (error) throw new Error(error.message);
-  };
-
-  const sendPasswordReset = async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
-    if (error) throw new Error(error.message);
   };
 
   return (
@@ -138,43 +135,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         session,
         loading,
-        login,
-        signup,
+        sendOtp,
+        verifyOtp,
         logout,
-        signInWithGoogle,
-        updateDisplayName,
-        resendVerificationEmail,
-        sendPasswordReset,
       }}
     >
       {children}
     </AuthContext.Provider>
   );
-}
-
-function mapSupabaseErrorCode(message: string): string {
-  const msg = message.toLowerCase();
-  if (
-    msg.includes("invalid login credentials") ||
-    msg.includes("invalid_credentials")
-  )
-    return "auth/invalid-credential";
-  if (
-    msg.includes("email not confirmed") ||
-    msg.includes("email_not_confirmed")
-  )
-    return "auth/email-not-verified";
-  if (
-    msg.includes("user already registered") ||
-    msg.includes("already been registered")
-  )
-    return "auth/email-already-in-use";
-  if (msg.includes("password should be at least")) return "auth/weak-password";
-  if (msg.includes("rate limit") || msg.includes("too many"))
-    return "auth/too-many-requests";
-  if (msg.includes("network") || msg.includes("fetch"))
-    return "auth/network-request-failed";
-  return "auth/unknown";
 }
 
 export function useAuthContext(): AuthContextType {
