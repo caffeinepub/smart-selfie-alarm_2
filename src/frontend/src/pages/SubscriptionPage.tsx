@@ -83,11 +83,26 @@ export default function SubscriptionPage() {
     setPaying(true);
     setStep("creating_subscription");
 
+    // 0. Idempotency check: if the user already has an active or trial-active
+    //    subscription, skip the edge function call and just navigate them in.
+    try {
+      const existing = await getUserSubscription(user.id);
+      if (existing && isSubscriptionActive(existing)) {
+        console.log("[SubscriptionPage] Already active — navigating to /home");
+        setPaying(false);
+        setStep("done");
+        navigate("/home");
+        return;
+      }
+    } catch {
+      // Non-fatal — proceed with subscription creation
+    }
+
     // 1. Load Razorpay SDK
     const loaded = await loadRazorpayScript();
     if (!loaded) {
       setPayError(
-        "Failed to load payment gateway. Please check your connection.",
+        "Payment gateway could not be loaded. Check your internet connection and try again.",
       );
       setPaying(false);
       setStep("idle");
@@ -104,7 +119,18 @@ export default function SubscriptionPage() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[SubscriptionPage] create-subscription failed:", msg);
-      setPayError(`Could not create subscription: ${msg}. Please try again.`);
+
+      // Distinguish network errors from API errors for clearer user messages
+      const isNetworkError =
+        msg.toLowerCase().includes("failed to fetch") ||
+        msg.toLowerCase().includes("network") ||
+        msg.toLowerCase().includes("fetch");
+
+      setPayError(
+        isNetworkError
+          ? "Could not connect to the server. Make sure the Edge Function is deployed and Razorpay secrets are set, then try again."
+          : `Subscription creation failed: ${msg}. Please try again.`,
+      );
       setPaying(false);
       setStep("idle");
       return;

@@ -1,7 +1,8 @@
 // Supabase Edge Function: create-subscription
-// Creates a Razorpay Subscription (NOT a one-time order).
-// The subscription uses a 7-day trial period — Razorpay charges ₹1 immediately
-// as an add-on auth charge, then auto-bills ₹29/month after the trial ends.
+// Creates a Razorpay Subscription using the Subscriptions API (NOT orders).
+//
+// Plan: plan_SONFVYmbADMnZR (₹29/month)
+// Flow: ₹1 charged immediately via addon → 7-day trial → ₹29/month autopay
 //
 // Deploy:
 //   supabase functions deploy create-subscription
@@ -20,8 +21,15 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+function jsonResponse(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+  });
+}
+
 serve(async (req) => {
-  // ── CORS preflight ────────────────────────────────────────────────────────
+  // ── CORS preflight ─────────────────────────────────────────────────────────
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS_HEADERS });
   }
@@ -33,138 +41,141 @@ serve(async (req) => {
     });
   }
 
-  // ── Read secrets ─────────────────────────────────────────────────────────
-  const RAZORPAY_KEY_ID = Deno.env.get("RAZORPAY_KEY_ID");
-  const RAZORPAY_KEY_SECRET = Deno.env.get("RAZORPAY_KEY_SECRET");
-  const RAZORPAY_MONTHLY_PLAN_ID = Deno.env.get("RAZORPAY_MONTHLY_PLAN_ID");
-
-  if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
-    console.error("[create-subscription] Missing Razorpay secrets");
-    return new Response(
-      JSON.stringify({ error: "Server misconfiguration: missing Razorpay keys" }),
-      {
-        status: 500,
-        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-      },
-    );
-  }
-
-  if (!RAZORPAY_MONTHLY_PLAN_ID) {
-    console.error("[create-subscription] Missing RAZORPAY_MONTHLY_PLAN_ID");
-    return new Response(
-      JSON.stringify({ error: "Server misconfiguration: missing plan ID" }),
-      {
-        status: 500,
-        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-      },
-    );
-  }
-
-  // ── Parse request body ───────────────────────────────────────────────────
-  let body: { user_id?: string; user_email?: string } = {};
   try {
-    body = await req.json();
-  } catch {
-    // no body is fine
-  }
+    // ── Read secrets ───────────────────────────────────────────────────────
+    const RAZORPAY_KEY_ID = Deno.env.get("RAZORPAY_KEY_ID");
+    const RAZORPAY_KEY_SECRET = Deno.env.get("RAZORPAY_KEY_SECRET");
+    // Allow override from env but fall back to the known plan ID
+    const PLAN_ID =
+      Deno.env.get("RAZORPAY_MONTHLY_PLAN_ID") ?? "plan_SONFVYmbADMnZR";
 
-  const userId = body.user_id ?? "";
-  const userEmail = body.user_email ?? "";
+    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+      console.error("[create-subscription] Missing Razorpay secrets");
+      return jsonResponse(
+        { error: "Server misconfiguration: missing Razorpay keys" },
+        500,
+      );
+    }
 
-  if (!userId) {
-    return new Response(
-      JSON.stringify({ error: "user_id is required" }),
-      {
-        status: 400,
-        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-      },
-    );
-  }
+    // ── Parse request body ─────────────────────────────────────────────────
+    let body: { user_id?: string; user_email?: string } = {};
+    try {
+      body = await req.json();
+    } catch {
+      // No body — use empty defaults
+    }
 
-  // ── Build Basic Auth header ──────────────────────────────────────────────
-  const credentials = btoa(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`);
+    const userId = (body.user_id ?? "").trim();
+    const userEmail = (body.user_email ?? "").trim();
 
-  // ── Create Razorpay Subscription ─────────────────────────────────────────
-  //
-  // Razorpay Subscriptions API:
-  //   POST https://api.razorpay.com/v1/subscriptions
-  //
-  // trial_period: number of days before the first recurring charge.
-  // addons: a one-time ₹1 charge collected immediately when the user
-  //         authorises the mandate — this is NOT the recurring amount.
-  //
-  // After trial_period days, Razorpay auto-charges ₹29 (the plan amount)
-  // every month and fires invoice.paid / subscription.charged webhooks.
+    if (!userId) {
+      return jsonResponse({ error: "user_id is required" }, 400);
+    }
 
-  const subscriptionPayload = {
-    plan_id: RAZORPAY_MONTHLY_PLAN_ID,
-    total_count: 120,        // ~10 years; effectively "until cancelled"
-    quantity: 1,
-    trial_period: 7,         // 7-day trial window
-    addons: [
-      {
-        item: {
-          name: "Smart Selfie Alarm — ₹1 Trial",
-          amount: 100,       // ₹1 in paise
-          currency: "INR",
+    // ── Build Basic Auth header ────────────────────────────────────────────
+    const credentials = btoa(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`);
+
+    // ── Create Razorpay Subscription ───────────────────────────────────────
+    //
+    // Razorpay Subscriptions API:  POST /v1/subscriptions
+    //
+    // plan_id        — the recurring plan (₹29/month)
+    // total_count    — number of billing cycles (12 = 1 year; Razorpay enforces min 12 for monthly)
+    // customer_notify — 1 = Razorpay sends email/SMS notifications to the customer
+    // trial_period   — days of free trial before first recurring charge
+    // addons         — charged immediately when the mandate is set up (₹1 trial auth)
+    // notes          — arbitrary key/value forwarded to webhook payloads
+    //
+    // IMPORTANT: total_count = 12 means 12 recurring cycles (months) after the trial.
+    // Razorpay will charge ₹1 immediately (addon), then ₹29 × 12 monthly.
+    // Set total_count to 120 for "effectively forever" subscriptions; user spec requires 12.
+
+    const subscriptionPayload = {
+      plan_id: PLAN_ID,
+      total_count: 12,          // 12 monthly billing cycles after trial
+      quantity: 1,
+      customer_notify: 1,       // Razorpay notifies the customer via email/SMS
+      trial_period: 7,          // 7-day trial before first recurring charge
+      addons: [
+        {
+          item: {
+            name: "Smart Selfie Alarm — ₹1 Trial Authorization",
+            amount: 100,         // ₹1 in paise (charged immediately on mandate setup)
+            currency: "INR",
+          },
         },
+      ],
+      notes: {
+        user_id: userId,
+        user_email: userEmail,
+        source: "smart_selfie_alarm",
       },
-    ],
-    notes: {
-      user_id: userId,
-      user_email: userEmail,
-    },
-    notify_info: {
-      notify_phone: null,
-      notify_email: userEmail || null,
-    },
-  };
+      // Only include notify_info when a valid email is present.
+      // Passing an empty string to Razorpay causes a BAD_REQUEST_ERROR.
+      ...(userEmail
+        ? {
+            notify_info: {
+              notify_email: userEmail,
+            },
+          }
+        : {}),
+    };
 
-  console.log("[create-subscription] Creating subscription for user:", userId);
-
-  const rzpRes = await fetch("https://api.razorpay.com/v1/subscriptions", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${credentials}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(subscriptionPayload),
-  });
-
-  const rzpBody = await rzpRes.json();
-
-  if (!rzpRes.ok) {
-    console.error("[create-subscription] Razorpay error:", rzpBody);
-    return new Response(
-      JSON.stringify({
-        error:
-          rzpBody?.error?.description ?? "Razorpay subscription creation failed",
-        details: rzpBody,
-      }),
-      {
-        status: rzpRes.status,
-        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-      },
+    console.log(
+      "[create-subscription] Creating subscription — plan:",
+      PLAN_ID,
+      "user:",
+      userId,
     );
-  }
 
-  console.log(
-    "[create-subscription] Subscription created:",
-    rzpBody.id,
-    "status:",
-    rzpBody.status,
-  );
+    const rzpRes = await fetch("https://api.razorpay.com/v1/subscriptions", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(subscriptionPayload),
+    });
 
-  return new Response(
-    JSON.stringify({
-      subscription_id: rzpBody.id,
-      status: rzpBody.status,
-      plan_id: rzpBody.plan_id,
+    const rzpBody = await rzpRes.json();
+
+    if (!rzpRes.ok) {
+      console.error("[create-subscription] Razorpay error:", rzpBody);
+      return jsonResponse(
+        {
+          error:
+            rzpBody?.error?.description ??
+            "Razorpay subscription creation failed",
+          code: rzpBody?.error?.code ?? "UNKNOWN",
+          details: rzpBody,
+        },
+        rzpRes.status,
+      );
+    }
+
+    const subscriptionId: string = rzpBody.id;
+    const status: string = rzpBody.status;
+
+    console.log(
+      "[create-subscription] Subscription created:",
+      subscriptionId,
+      "status:",
+      status,
+    );
+
+    // Return the subscription_id and supporting checkout data.
+    // Frontend uses subscription_id (NOT order_id) when opening Razorpay checkout.
+    return jsonResponse({
+      subscription_id: subscriptionId,
+      status,
+      plan_id: rzpBody.plan_id ?? PLAN_ID,
       short_url: rzpBody.short_url ?? null,
-    }),
-    {
-      status: 200,
-      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-    },
-  );
+      // Echo back so frontend can verify
+      user_id: userId,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[create-subscription] Unexpected error:", msg);
+    return jsonResponse({ error: msg }, 500);
+  }
 });

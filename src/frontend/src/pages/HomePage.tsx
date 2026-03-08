@@ -4,6 +4,7 @@ import {
   Bell,
   Brain,
   CalendarDays,
+  Camera,
   Eye,
   Plus,
   Smartphone,
@@ -338,6 +339,45 @@ export default function HomePage() {
               </div>
             )}
           </div>
+        </motion.div>
+
+        {/* ── Test Alarm ───────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.22 }}
+          className="mb-3"
+        >
+          <button
+            type="button"
+            className="w-full rounded-[18px] flex items-center gap-3 px-5 transition-all active:scale-[0.97]"
+            style={{
+              height: "56px",
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(139,92,246,0.28)",
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
+            }}
+            onClick={() => navigate("/alarm-trigger?test=true")}
+            data-ocid="home.test_alarm_button"
+          >
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ background: "rgba(124,58,237,0.18)" }}
+            >
+              <Camera
+                className="w-4.5 h-4.5"
+                style={{ width: 18, height: 18, color: "#a78bfa" }}
+              />
+            </div>
+            <div className="text-left flex-1">
+              <p className="text-sm font-bold text-white leading-tight">
+                Test Alarm
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: "#7c6fcd" }}>
+                Check selfie and live verification
+              </p>
+            </div>
+          </button>
         </motion.div>
 
         {/* ── Primary CTA ──────────────────────────── */}

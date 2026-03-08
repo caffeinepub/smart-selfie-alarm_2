@@ -26,12 +26,19 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+// In-memory set of user IDs for which ensureUserRow has already run this session.
+// Prevents redundant DB calls on every TOKEN_REFRESHED event.
+const ensuredUsers = new Set<string>();
+
 /**
  * Ensures a bare row exists in public.users (id + email only).
  * Also ensures a subscriptions row exists with plan="free", status="free", trial_used=false.
  * Uses NEW schema column names. Does NOT grant premium access.
+ * Runs at most once per user ID per browser session.
  */
 async function ensureUserRow(user: User): Promise<void> {
+  if (ensuredUsers.has(user.id)) return;
+  ensuredUsers.add(user.id);
   // 1. Bare users row
   const { error: userError } = await supabase.from("users").upsert(
     {
@@ -144,8 +151,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(s);
       setUser(s?.user ?? null);
       setLoading(false);
-      // Ensure the public.users row exists for new and returning users
-      if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && s?.user) {
+      // Ensure the public.users and subscriptions rows exist.
+      // Only run on SIGNED_IN (not TOKEN_REFRESHED) — the in-memory guard
+      // also prevents duplicate calls within the same session.
+      if (event === "SIGNED_IN" && s?.user) {
         ensureUserRow(s.user);
       }
     });

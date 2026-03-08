@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { AlertTriangle, Camera, Loader2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { SuccessAnimation } from "../components/SuccessAnimation";
 import { TaskProgress } from "../components/TaskProgress";
 import { VerificationMode } from "../context/AlarmContext";
@@ -866,17 +866,121 @@ function LiveVerificationView({ onComplete }: LiveVerificationViewProps) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Test mode result overlay
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TestResultOverlay({
+  success,
+  onRetry,
+  onDone,
+}: {
+  success: boolean;
+  onRetry: () => void;
+  onDone: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-6"
+      style={{ background: "rgba(5,5,8,0.92)", backdropFilter: "blur(8px)" }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="w-full max-w-sm rounded-[26px] p-7 text-center"
+        style={{
+          background: "linear-gradient(160deg, #12121e 0%, #0d0d18 100%)",
+          border: `1px solid ${success ? "rgba(34,208,122,0.3)" : "rgba(239,68,68,0.25)"}`,
+          boxShadow: "0 24px 64px rgba(0,0,0,0.8)",
+        }}
+      >
+        <div
+          className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl"
+          style={{
+            background: success
+              ? "rgba(34,208,122,0.15)"
+              : "rgba(239,68,68,0.12)",
+            border: `1px solid ${success ? "rgba(34,208,122,0.3)" : "rgba(239,68,68,0.25)"}`,
+          }}
+        >
+          {success ? "✓" : "✗"}
+        </div>
+        <h2
+          className="text-lg font-bold text-white mb-2"
+          style={{ letterSpacing: "-0.02em" }}
+        >
+          {success ? "Verification Successful" : "Verification Failed"}
+        </h2>
+        <p className="text-sm mb-6" style={{ color: "#64748b" }}>
+          {success ? "Alarm system works correctly." : "Please try again."}
+        </p>
+
+        {success ? (
+          <button
+            type="button"
+            className="w-full h-12 rounded-2xl font-bold text-white text-sm"
+            style={{
+              background: "linear-gradient(135deg, #22d07a, #059669)",
+              boxShadow: "0 4px 20px rgba(34,208,122,0.3)",
+            }}
+            onClick={onDone}
+            data-ocid="test.done_button"
+          >
+            Done
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="w-full h-12 rounded-2xl font-bold text-white text-sm"
+              style={{
+                background: "linear-gradient(135deg, #7c3aed, #6d28d9)",
+                boxShadow: "0 4px 20px rgba(124,58,237,0.3)",
+              }}
+              onClick={onRetry}
+              data-ocid="test.retry_button"
+            >
+              Try Again
+            </button>
+            <button
+              type="button"
+              className="w-full h-10 rounded-xl text-sm font-medium"
+              style={{ color: "#475569" }}
+              onClick={onDone}
+              data-ocid="test.cancel_button"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </motion.div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main VerificationPage
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function VerificationPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isTestMode = searchParams.get("test") === "true";
+
   const { activeAlarm, recordSuccess } = useAlarms();
   const [showSuccess, setShowSuccess] = useState(false);
+  const [testResult, setTestResult] = useState<"success" | "failed" | null>(
+    null,
+  );
 
   const handleComplete = async () => {
     // Stop alarm immediately on verification success
     stopAlarmSound();
+
+    if (isTestMode) {
+      setTestResult("success");
+      return;
+    }
+
     setShowSuccess(true);
     await recordSuccess();
     setTimeout(() => {
@@ -884,30 +988,42 @@ export default function VerificationPage() {
     }, 500);
   };
 
-  // If no active alarm navigate back — but do NOT stop sound here,
-  // this handles the case where alarm was already dismissed (e.g. snooze)
+  // If no active alarm and not in test mode, navigate back
   useEffect(() => {
-    if (!activeAlarm) {
+    if (!isTestMode && !activeAlarm) {
       navigate("/dashboard", { replace: true });
     }
-  }, [activeAlarm, navigate]);
+  }, [activeAlarm, isTestMode, navigate]);
 
-  const isSelfieMode =
-    activeAlarm?.verificationMode === VerificationMode.selfie;
-
-  if (isSelfieMode) {
-    return (
-      <>
-        <SelfieVerificationView onComplete={handleComplete} />
-        <SuccessAnimation show={showSuccess} />
-      </>
-    );
-  }
+  // Test mode: use selfie verification by default
+  const isSelfieMode = isTestMode
+    ? true
+    : activeAlarm?.verificationMode === VerificationMode.selfie;
 
   return (
     <>
-      <LiveVerificationView onComplete={handleComplete} />
-      <SuccessAnimation show={showSuccess} />
+      {isSelfieMode ? (
+        <SelfieVerificationView onComplete={handleComplete} />
+      ) : (
+        <LiveVerificationView onComplete={handleComplete} />
+      )}
+
+      {!isTestMode && <SuccessAnimation show={showSuccess} />}
+
+      {isTestMode && testResult && (
+        <TestResultOverlay
+          success={testResult === "success"}
+          onRetry={() => {
+            setTestResult(null);
+            stopAlarmSound();
+            navigate("/alarm-trigger?test=true");
+          }}
+          onDone={() => {
+            stopAlarmSound();
+            navigate("/home");
+          }}
+        />
+      )}
     </>
   );
 }

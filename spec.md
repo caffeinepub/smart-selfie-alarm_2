@@ -2,67 +2,40 @@
 
 ## Current State
 
-- Frontend: React + Tailwind, Supabase Auth (email OTP only), SubscriptionContext, SubscriptionPage
-- Backend: Supabase (project ozorrmrvvhmtpoeelewb), public.users and public.alarms tables
-- Payments: Razorpay integration partially exists using one-time orders (amount-based, no real plan IDs)
-- Current plans on SubscriptionPage: "trial" (₹1) and "monthly" (₹29) using Razorpay Orders API
-- Webhook: Edge Function at supabase/functions/razorpay-webhook handles payment.captured, order.paid
-- DB columns used: is_premium, plan_type, subscription_status, subscription_expiry_date, auto_renew, razorpay_subscription_id, last_payment_amount, last_payment_txn_id
-- subscriptionService.ts uses column names is_premium, plan_type, subscription_expiry_date
-- SUPABASE_SETUP.sql defines users table but does NOT have premium_expires_at, razorpay_payment_id columns (uses subscription_expiry_date, last_payment_txn_id instead)
-- AuthContext: email OTP only — DO NOT MODIFY
+Full-stack alarm app with Supabase auth (email + password + OTP), Razorpay subscriptions (₹1 trial → ₹29/month autopay), and face verification alarm dismissal. The core flows are implemented but several bugs were found in the audit:
+
+1. **CRITICAL SECURITY**: Razorpay live secret key (`e3fkInGlSS6S3qTV9RK43M9W`) was exposed in 3 public CSV files under `public/assets/`. These files must be deleted.
+2. **SubscriptionPage**: No idempotency check — if a subscription was already created and the user re-taps "Start Trial", a duplicate Razorpay subscription is created.
+3. **create-subscription edge function**: `notify_info.notify_email` sends an empty string to Razorpay when email is blank, which Razorpay may reject.
+4. **Webhook**: `activateTrial` tries to update `users` table with `is_premium`, `plan_type`, `subscription_id`, `trial_end` columns — these only exist after the SQL setup is run. Any schema mismatch silently fails but also clutters logs.
+5. **HomePage**: Test Alarm button is missing — it was requested and should appear above the alarm list.
+6. **AuthContext `ensureUserRow`**: The function runs on every `SIGNED_IN` event (including token refreshes) and does redundant DB calls. Should be guarded to only run once per user per session.
+7. **Dead code**: `useInternetIdentity.ts`, `StorageClient.ts`, `backend.d.ts` references, `ToolsPage`, `StopwatchPage`, `TimerPage` are orphaned from the ICP migration and unused.
+8. **SUPABASE_SETUP.sql**: Must add missing columns to the `users` table and improve trigger to be idempotent.
 
 ## Requested Changes (Diff)
 
 ### Add
-- 3 real Razorpay Subscription plan IDs wired into the checkout:
-  - Monthly: plan_SONFVYmbADMnZR (₹29/month)
-  - Half Yearly: plan_SONGMogC09Y1HQ (₹149/6 months)
-  - Yearly: plan_SONGrpyyySiGEc (₹279/year)
-- 7-day free trial period on each Razorpay Subscription (trial_period=7 passed in subscription creation options)
-- "Start Free Trial" CTA button on subscription page
-- "Best Value" badge on Yearly plan
-- Razorpay Subscriptions API checkout flow: create subscription → open checkout with subscription_id → user approves UPI autopay mandate
-- Supabase SQL stored function activate_premium(user_id, payment_amount, payment_id) to atomically update users table
-- Webhook: listen for subscription.activated, subscription.charged, payment.captured events
-- Backup link display: https://rzp.io/rzp/kcd3loz on subscription page
-- New DB columns: premium_expires_at (timestamptz), razorpay_payment_id (text), auto_renew (boolean) — ADD IF NOT EXISTS in updated SQL
+- Test Alarm button on `HomePage` above the alarm list, reusing the existing `AlarmTriggerPage` face verification flow
+- Idempotency check in `SubscriptionPage.handleTrialPayment` — check if user already has an active or pending subscription before calling `create-subscription`
+- `subscription.cancelled` webhook event handler that sets `status = cancelled`
 
 ### Modify
-- SubscriptionPage.tsx: replace 2-plan card layout with 3-plan layout (Monthly, Half Yearly, Yearly), update title to "Unlock Premium", update CTA to "Start Free Trial", add "7 Day Free Trial" badge, wire Razorpay Subscriptions checkout
-- subscriptionService.ts: update plan types, price paise constants, plan duration days, isSubscriptionActive to read premium_expires_at or subscription_expiry_date
-- supabase/functions/razorpay-webhook/index.ts: add handlers for subscription.activated and subscription.charged events, call activate_premium logic with correct plan durations, fix column names to match both premium_expires_at and subscription_expiry_date
-- SUPABASE_SETUP.sql: add activate_premium() stored function, add missing columns, update plan duration mapping
+- Delete the 3 exposed CSV files from `public/assets/` (done)
+- `create-subscription` edge function: sanitize `notify_info` — only include `notify_email` when a non-empty email is provided
+- `razorpay-webhook`: wrap the `users` table update in a try/catch with graceful column-not-found handling; add `subscription.cancelled` event handler
+- `AuthContext.ensureUserRow`: add a session-level guard so it only runs once per user session (not on every token refresh)
+- `SubscriptionPage`: add pre-flight subscription check before showing the Razorpay checkout; show clearer error messages distinguishing network errors from API errors
+- `SUPABASE_SETUP.sql`: ensure all required columns exist with correct defaults; improve trigger to handle re-runs safely
 
 ### Remove
-- Trial ₹1 one-time order flow from SubscriptionPage (replaced by Razorpay Subscriptions trial_period)
-- Old PLANS array entries for "trial" and "monthly" as standalone paid plans (replaced by 3-plan Subscriptions flow)
+- Nothing (dead code files are left — removing them is a separate refactor and does not affect the build)
 
 ## Implementation Plan
 
-1. Update SUPABASE_SETUP.sql:
-   - ALTER TABLE users ADD COLUMN IF NOT EXISTS for: premium_expires_at, razorpay_payment_id, auto_renew
-   - Create activate_premium(uid uuid, p_amount numeric, p_payment_id text) stored function that sets is_premium=true, premium_expires_at based on plan, last_payment_amount, razorpay_payment_id, auto_renew=true
-
-2. Update subscriptionService.ts:
-   - New plan types: "monthly" | "halfYearly" | "yearly" | "free"
-   - New price paise constants for all 3 plans
-   - PLAN_DURATION_DAYS: monthly=30, halfYearly=183, yearly=365
-   - isSubscriptionActive: check premium_expires_at (or subscription_expiry_date as fallback) > now()
-   - activateSubscription: write to both premium_expires_at and subscription_expiry_date for compatibility
-
-3. Update SubscriptionPage.tsx:
-   - New PLANS array: Monthly ₹29, Half Yearly ₹149, Yearly ₹279 (Best Value badge + "Save 20%")
-   - Title: "Unlock Premium", Badge strip: "7 Day Free Trial"
-   - handleStartTrial: call Razorpay Subscriptions API to create subscription (using plan_id + trial_period=7), then open Razorpay checkout with subscription_id
-   - Subscription checkout handler: on success, call activateSubscription with razorpay_subscription_id, razorpay_payment_id
-   - Backup link as small text: "Or use: rzp.io/rzp/kcd3loz"
-   - CTA button text: "Start Free Trial"
-
-4. Update supabase/functions/razorpay-webhook/index.ts:
-   - Add event handling for subscription.activated and subscription.charged
-   - Extract subscription entity, plan, user_id from notes
-   - Write is_premium=true, premium_expires_at, subscription_expiry_date, razorpay_payment_id, auto_renew=true
-   - Existing payment.captured handling kept for backup
-
-5. Validate build and deploy
+1. Fix `create-subscription/index.ts`: sanitize `notify_info` email
+2. Fix `razorpay-webhook/index.ts`: add `subscription.cancelled` handler; make `users` update schema-safe with column existence check
+3. Fix `AuthContext.tsx`: add `ensureUserRow` session guard
+4. Fix `SubscriptionPage.tsx`: add subscription idempotency check before calling edge function; improve error messages
+5. Fix `HomePage.tsx`: add Test Alarm button above alarm list that navigates to `/alarm-trigger` with a `?test=true` query param
+6. Update `SUPABASE_SETUP.sql`: final production-ready SQL with all required columns and idempotent trigger
