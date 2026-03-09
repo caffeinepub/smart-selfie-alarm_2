@@ -21,17 +21,20 @@ export interface SubscriptionRow {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-export const RAZORPAY_KEY_ID = "rzp_live_SNnU8ftzmAC4jA";
+export const RAZORPAY_KEY_ID = "rzp_live_SOvVaQmeBO5hKJ";
 
-// Post-trial monthly autopay plan
-export const RAZORPAY_MONTHLY_PLAN_ID = "plan_SONFVYmbADMnZR";
+// Plan IDs
+export const RAZORPAY_PLAN_MONTHLY = "plan_SONFVYmbADMnZR";
+export const RAZORPAY_PLAN_HALF_YEARLY = "plan_SONGMogCO9YlHQ";
+export const RAZORPAY_PLAN_YEARLY = "plan_SONGrpyyySiGEc";
 
-const SUPABASE_URL = "https://ozorrmrvvhmtpoeelewb.supabase.co";
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96b3JybXJ2dmhtdHBvZWVsZXdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3OTY3ODksImV4cCI6MjA4ODM3Mjc4OX0.t6mhVisTuS12QUD8M9b5DrLtlzcIhaILkaTSvoGuF_s";
+// Post-trial monthly autopay plan (kept for backward compat)
+export const RAZORPAY_MONTHLY_PLAN_ID = RAZORPAY_PLAN_MONTHLY;
 
-// Edge Function URL for creating Razorpay subscriptions
-const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/create-subscription`;
+// Edge Function URL — "create-order" creates a Razorpay Subscription
+// (despite the name, it returns subscription_id, not order_id)
+const EDGE_FUNCTION_URL =
+  "https://ozorrmrvvhmtpoeelewb.supabase.co/functions/v1/create-order";
 
 // ─── DB helpers ──────────────────────────────────────────────────────────────
 
@@ -106,47 +109,98 @@ export function isSubscriptionActive(sub: SubscriptionRow | null): boolean {
 // ─── Razorpay Subscription creation ──────────────────────────────────────────
 
 /**
- * Call the create-subscription Supabase Edge Function.
+ * Call the create-order Supabase Edge Function.
+ * Despite the name, it creates a Razorpay SUBSCRIPTION (not a one-time order).
  * Returns the Razorpay subscription_id (e.g. "sub_XXXXXXXXXX").
+ *
  * The edge function creates a Razorpay subscription with:
- *   - ₹1 charged immediately (trial auth payment)
+ *   - ₹1 charged immediately (trial auth addon payment)
  *   - 7-day trial period
  *   - ₹29/month auto-billing after trial
+ *
+ * Frontend must then open Razorpay checkout with subscription_id (not order_id).
  */
 export async function createRazorpaySubscription(
   userId: string,
   userEmail: string,
+  planId: string = RAZORPAY_PLAN_MONTHLY,
 ): Promise<string> {
+  // Call the Edge Function with Content-Type only — no Authorization header.
   const res = await fetch(EDGE_FUNCTION_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      apikey: SUPABASE_ANON_KEY,
     },
     body: JSON.stringify({
       user_id: userId,
       user_email: userEmail,
+      plan_id: planId,
     }),
   });
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`create-subscription failed (${res.status}): ${body}`);
+    throw new Error(`create-order failed (${res.status}): ${body}`);
   }
 
   const json = await res.json();
-  const subscriptionId =
-    json?.subscription_id ?? json?.id ?? json?.subscriptionId;
+
+  // Edge function returns { subscription_id: "sub_XXXX", ... }
+  // Only accept a real Razorpay subscription ID (starts with "sub_")
+  const subscriptionId = json?.subscription_id;
 
   if (!subscriptionId) {
     throw new Error(
-      `create-subscription returned no subscription_id. Response: ${JSON.stringify(json)}`,
+      `create-order returned no subscription_id. Response: ${JSON.stringify(json)}`,
+    );
+  }
+
+  if (
+    typeof subscriptionId === "string" &&
+    !subscriptionId.startsWith("sub_")
+  ) {
+    // Got an order_id or something unexpected — the old order-based code is still deployed
+    throw new Error(
+      `create-order returned an invalid subscription_id: "${subscriptionId}". Ensure the latest create-order Edge Function is deployed (it must call the Razorpay Subscriptions API, not Orders API).`,
     );
   }
 
   console.log("[createRazorpaySubscription] subscription_id:", subscriptionId);
   return subscriptionId as string;
+}
+
+// ─── user_trials helpers ──────────────────────────────────────────────────────
+
+/**
+ * Check whether the user has already used their ₹1 free trial.
+ * Uses `user_trials` table (user_id, trial_used boolean).
+ * Falls back to the `subscriptions` table trial_used flag as secondary source.
+ */
+export async function hasUserUsedTrial(uid: string): Promise<boolean> {
+  // Primary: user_trials table
+  const { data: trialRow } = await supabase
+    .from("user_trials")
+    .select("trial_used")
+    .eq("user_id", uid)
+    .maybeSingle();
+
+  if (trialRow != null) return trialRow.trial_used === true;
+
+  // Fallback: subscriptions.trial_used
+  const sub = await getUserSubscription(uid);
+  return sub?.trial_used === true;
+}
+
+/**
+ * Mark the trial as used for the given user in user_trials table.
+ */
+export async function markTrialUsed(uid: string): Promise<void> {
+  const { error } = await supabase
+    .from("user_trials")
+    .upsert({ user_id: uid, trial_used: true }, { onConflict: "user_id" });
+  if (error) {
+    console.error("[markTrialUsed] Failed:", error.message);
+  }
 }
 
 // ─── Activation ───────────────────────────────────────────────────────────────

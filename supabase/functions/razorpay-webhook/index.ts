@@ -5,26 +5,10 @@
 //
 // Events handled:
 //   subscription.activated  → activate 7-day trial access
+//   subscription.charged    → extend monthly access (user spec requirement)
 //   subscription.cancelled  → mark subscription as cancelled
 //   payment.captured        → belt-and-suspenders trial activation fallback
 //   invoice.paid            → extend monthly access after each billing cycle
-//
-// Database updates on activation:
-//   subscriptions table:
-//     plan        = "trial"
-//     status      = "active"
-//     trial_start = now()
-//     trial_end   = now() + 7 days
-//     expires_at  = now() + 7 days
-//     trial_used  = true
-//     razorpay_subscription_id = <sub id>
-//     razorpay_payment_id      = <payment id>
-//
-//   users table (best-effort — skipped gracefully if columns missing):
-//     is_premium      = true
-//     plan_type       = "monthly"
-//     subscription_id = <razorpay subscription id>
-//     trial_end       = now() + 7 days
 //
 // Deploy:
 //   supabase functions deploy razorpay-webhook
@@ -38,12 +22,13 @@
 //
 // Events to subscribe in Razorpay Dashboard:
 //   subscription.activated
+//   subscription.charged
 //   subscription.cancelled
 //   invoice.paid
 //   payment.captured
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+import { createHmac } from "node:crypto";
 
 const SUPABASE_URL = "https://ozorrmrvvhmtpoeelewb.supabase.co";
 
@@ -75,25 +60,17 @@ function errResponse(msg: string, status = 400) {
 }
 
 // ── HMAC-SHA256 signature verification ────────────────────────────────────────
-async function verifySignature(
+// Uses node:crypto createHmac (same as Razorpay Node.js SDK)
+function verifySignature(
   body: string,
   signature: string,
   secret: string,
-): Promise<boolean> {
+): boolean {
   try {
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"],
-    );
-    const sigBytes = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
-    const computed = Array.from(new Uint8Array(sigBytes))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-    return computed === signature;
+    const expected = createHmac("sha256", secret)
+      .update(body)
+      .digest("hex");
+    return expected === signature;
   } catch {
     return false;
   }
@@ -146,10 +123,24 @@ async function activateTrial(
     throw new Error(`subscriptions update failed: ${subErr.message}`);
   }
 
-  // ── 2. Update users table (best-effort) ───────────────────────────────────
-  // is_premium, plan_type, subscription_id, trial_end columns are added by
-  // SUPABASE_SETUP.sql. If they don't exist yet the update is skipped gracefully.
-  // The subscriptions table is the source of truth — this is a denormalised cache.
+  // ── 2. Mark trial used in user_trials table ───────────────────────────────
+  try {
+    const { error: trialErr } = await supabase
+      .from("user_trials")
+      .upsert(
+        { user_id: userId, trial_used: true },
+        { onConflict: "user_id" },
+      );
+    if (trialErr) {
+      console.warn("[razorpay-webhook] user_trials upsert skipped:", trialErr.message);
+    }
+  } catch (trialUpdateErr) {
+    console.warn("[razorpay-webhook] user_trials update threw:", String(trialUpdateErr));
+  }
+
+  // ── 3. Update users table (best-effort) ───────────────────────────────────
+  // is_premium, plan_type, subscription_id, trial_end are in SUPABASE_SETUP.sql.
+  // The subscriptions table is the source of truth.
   try {
     const { error: userErr } = await supabase
       .from("users")
@@ -162,8 +153,7 @@ async function activateTrial(
       .eq("id", userId);
 
     if (userErr) {
-      // column_not_found (code 42703) means SUPABASE_SETUP.sql not yet run.
-      // Any other error is unexpected but still non-fatal here.
+      // code 42703 = column not found (SUPABASE_SETUP.sql not yet run — non-fatal)
       console.warn(
         "[razorpay-webhook] users update skipped:",
         userErr.code,
@@ -228,14 +218,17 @@ async function extendMonthlyAccess(
     throw new Error(`subscriptions extend failed: ${subErr.message}`);
   }
 
-  // Update users table
-  const updatePayload: Record<string, unknown> = {
-    is_premium: true,
-    plan_type: "monthly",
-  };
-  if (subscriptionId) updatePayload.subscription_id = subscriptionId;
-
-  await supabase.from("users").update(updatePayload).eq("id", userId);
+  // Update users table (best-effort)
+  try {
+    const updatePayload: Record<string, unknown> = {
+      is_premium: true,
+      plan_type: "monthly",
+    };
+    if (subscriptionId) updatePayload.subscription_id = subscriptionId;
+    await supabase.from("users").update(updatePayload).eq("id", userId);
+  } catch (_) {
+    // Non-fatal — users table columns may not exist yet
+  }
 
   console.log(
     "[razorpay-webhook] Monthly access extended — user:",
@@ -249,7 +242,7 @@ async function extendMonthlyAccess(
 // Main handler
 // ─────────────────────────────────────────────────────────────────────────────
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS_HEADERS });
   }
@@ -279,7 +272,7 @@ serve(async (req) => {
     if (!sig) {
       console.warn("[razorpay-webhook] No x-razorpay-signature header");
     }
-    const valid = await verifySignature(rawBody, sig, WEBHOOK_SECRET);
+    const valid = verifySignature(rawBody, sig, WEBHOOK_SECRET);
     if (!valid) {
       console.error("[razorpay-webhook] Signature mismatch — rejecting request");
       return errResponse("Invalid signature", 400);
@@ -334,7 +327,7 @@ serve(async (req) => {
       console.error(
         "[razorpay-webhook] subscription.activated: no user_id in notes. sub_id:",
         subscriptionId,
-        "— cannot activate. Ensure frontend passes user_id when calling create-subscription.",
+        "— cannot activate. Ensure frontend passes user_id when calling create-order.",
       );
       return ok({ skipped: "missing_user_id" });
     }
@@ -345,6 +338,84 @@ serve(async (req) => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[razorpay-webhook] subscription.activated error:", msg);
+      return errResponse(msg, 500);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // EVENT: subscription.charged
+  // Fires each time Razorpay successfully charges the subscription (including
+  // the ₹1 trial charge and each subsequent ₹29 monthly charge).
+  // Updates users.is_premium = true and extends access.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (eventName === "subscription.charged") {
+    const subEntity = (
+      event.payload?.subscription as Record<string, unknown>
+    )?.entity as Record<string, unknown> | undefined;
+
+    const paymentEntity = (
+      event.payload?.payment as Record<string, unknown>
+    )?.entity as Record<string, unknown> | undefined;
+
+    if (!subEntity) {
+      console.warn("[razorpay-webhook] subscription.charged: missing subscription entity");
+      return ok({ skipped: "missing_entity" });
+    }
+
+    const subscriptionId = String(subEntity.id ?? "");
+    const paymentId = String(paymentEntity?.id ?? "");
+    let userId = extractUserId(subEntity.notes);
+
+    // Fall back to DB lookup if notes don't carry user_id
+    if (!userId && subscriptionId) {
+      const { data } = await supabase
+        .from("subscriptions")
+        .select("user_id")
+        .eq("razorpay_subscription_id", subscriptionId)
+        .maybeSingle();
+      userId = data?.user_id ?? "";
+    }
+
+    if (!userId) {
+      console.warn(
+        "[razorpay-webhook] subscription.charged: could not resolve user_id. sub:",
+        subscriptionId,
+      );
+      return ok({ skipped: "missing_user_id" });
+    }
+
+    // Determine if this is the first charge (trial) or a recurring monthly charge
+    // charge_at on sub entity 1 = first cycle = trial activation
+    const paidCount = Number(subEntity.paid_count ?? 0);
+
+    console.log(
+      "[razorpay-webhook] subscription.charged — user:",
+      userId,
+      "paid_count:",
+      paidCount,
+    );
+
+    try {
+      if (paidCount <= 1) {
+        // First charge: activate trial
+        await activateTrial(supabase, userId, subscriptionId, paymentId);
+      } else {
+        // Subsequent charges: extend monthly access
+        await extendMonthlyAccess(supabase, userId, subscriptionId, paymentId);
+      }
+
+      // Always ensure is_premium = true on users table
+      try {
+        await supabase
+          .from("users")
+          .update({ is_premium: true })
+          .eq("id", userId);
+      } catch (_) { /* non-fatal */ }
+
+      return ok({ charged: true, user_id: userId, paid_count: paidCount });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[razorpay-webhook] subscription.charged error:", msg);
       return errResponse(msg, 500);
     }
   }
@@ -380,7 +451,7 @@ serve(async (req) => {
       return ok({ skipped: "not_subscription_payment" });
     }
 
-    // Check if already activated by subscription.activated handler
+    // Check if already activated by subscription.activated or subscription.charged
     const { data: existing } = await supabase
       .from("subscriptions")
       .select("status, trial_end")
